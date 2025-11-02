@@ -1,0 +1,6 @@
+services:
+  app:
+    image: ghcr.io/nikomaxos/ai-dev-lab:latest
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
