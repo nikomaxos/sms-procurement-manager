@@ -64,11 +64,36 @@ services:
     networks:
       - smsnet
 
+  backup:
+    image: postgres:16
+    container_name: pgbackup
+    restart: always
+    environment:
+      - PGPASSWORD=postgres
+    volumes:
+      - postgres_backups:/backups
+    depends_on:
+      - db
+    networks:
+      - smsnet
+    entrypoint: >
+      sh -c '
+      echo "⏰ Starting scheduled PostgreSQL backups...";
+      while true; do
+        TS=$(date +%Y-%m-%d_%H-%M);
+        pg_dump -h db -U postgres -F c -f /backups/smsdb_$TS.dump smsdb &&
+        gzip /backups/smsdb_$TS.dump &&
+        find /backups -type f -mtime +7 -delete;
+        sleep 86400;
+      done
+      '
+
 volumes:
   postgres_data:
   portainer_data:
   portainer_certs:
   pgadmin_data:
+  postgres_backups:
 
 networks:
   smsnet:
