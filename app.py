@@ -3,7 +3,7 @@ app = Flask(__name__)
 
 @app.get("/")
 def root():
-    return {"status": "ok", "service": "ai-dev-lab"}
+    return {"status": "ok", "service": "sms-procurement-manager"}
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
