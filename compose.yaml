@@ -1,6 +1,6 @@
 services:
-  app:
-    image: ghcr.io/nikomaxos/ai-dev-lab:latest
+  sms-procurement-manager:
+    image: ghcr.io/nikomaxos/sms-procurement-manager:latest
     ports:
-      - "8080:8080"
+      - "9092:8080"
     restart: unless-stopped
