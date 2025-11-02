@@ -1,0 +1,99 @@
+diff --git a/.env.example b/.env.example
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/.env.example
+@@
++POSTGRES_USER=postgres
++POSTGRES_PASSWORD=postgres
++POSTGRES_DB=smsdb
++APP_PORT=8000
+
+diff --git a/README_infra.md b/README_infra.md
+new file mode 100644
+index 0000000..2222222
+--- /dev/null
++++ b/README_infra.md
+@@
++# Infrastructure Setup
++
++This stack provides:
++- PostgreSQL 16
++- Portainer CE (with self-signed HTTPS)
++- Your App container
++
++## Run
++```bash
++docker compose up -d
++```
++
++- App: http://localhost:8000
++- Portainer: https://localhost:9443
++- PostgreSQL: internal (db:5432)
++
++Self-signed SSL certificates are auto-generated on first run and persist in `portainer_certs`.
+
+diff --git a/docker-compose.yml b/docker-compose.yml
+new file mode 100644
+index 0000000..3333333
+--- /dev/null
++++ b/docker-compose.yml
+@@
++version: "3.9"
++
++services:
++  app:
++    build: .
++    container_name: sms-procurement-app
++    restart: always
++    ports:
++      - "8000:8000"
++    depends_on:
++      - db
++    environment:
++      - DATABASE_URL=postgresql://postgres:postgres@db:5432/smsdb
++    networks:
++      - smsnet
++
++  db:
++    image: postgres:16
++    container_name: sms-procurement-db
++    restart: always
++    environment:
++      POSTGRES_USER: postgres
++      POSTGRES_PASSWORD: postgres
++      POSTGRES_DB: smsdb
++    volumes:
++      - postgres_data:/var/lib/postgresql/data
++    networks:
++      - smsnet
++
++  portainer:
++    image: portainer/portainer-ce:latest
++    container_name: portainer
++    restart: always
++    ports:
++      - "9000:9000"
++      - "9443:9443"
++    volumes:
++      - /var/run/docker.sock:/var/run/docker.sock
++      - portainer_data:/data
++      - portainer_certs:/certs
++    command: >
++      sh -c "if [ ! -f /certs/portainer.crt ]; then
++                openssl req -x509 -newkey rsa:4096 -keyout /certs/portainer.key
++                -out /certs/portainer.crt -sha256 -days 365 -nodes
++                -subj '/CN=localhost';
++              fi &&
++              /portainer"
++    networks:
++      - smsnet
++
++volumes:
++  postgres_data:
++  portainer_data:
++  portainer_certs:
++
++networks:
++  smsnet:
++    driver: bridge
