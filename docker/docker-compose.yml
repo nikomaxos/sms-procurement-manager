@@ -1,0 +1,69 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: spm
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7
+
+  minio:
+    image: minio/minio:latest
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio123
+    command: server /data --console-address ":9001"
+    ports:
+      - "9002:9000"
+      - "9003:9001"
+    volumes:
+      - minio:/data
+
+  api:
+    build:
+      context: ../api
+      dockerfile: api.Dockerfile
+    env_file:
+      - ../.env.example
+    depends_on:
+      - postgres
+      - redis
+    ports:
+      - "8010:8000"
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "20"
+
+  worker:
+    build:
+      context: ../worker
+      dockerfile: worker.Dockerfile
+    env_file:
+      - ../.env.example
+    depends_on:
+      - api
+      - redis
+
+  web:
+    build:
+      context: ../web
+      dockerfile: web.Dockerfile
+    ports:
+      - "5183:80"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
+  minio:
