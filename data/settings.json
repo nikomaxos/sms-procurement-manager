@@ -1,0 +1,1 @@
+{"imap": {"host": "", "port": 993, "username": "", "password": "", "ssl": true, "folder": "INBOX", "enabled": false}, "scrape": {"enabled": false, "interval_minutes": 30, "user_agent": "Mozilla/5.0", "max_concurrency": 4, "start_urls": [], "allow_domains": [], "block_domains": [], "render_js": false}}

@@ -1,0 +1,46 @@
+(() => {
+  const $ = (s)=>document.querySelector(s);
+  const root=$("#root"),nav=$("#nav");
+  const API=`http://${location.hostname}:8010`;
+  const token=()=>localStorage.getItem("token")||"";
+  const setT=t=>localStorage.setItem("token",t);
+  const clrT=()=>localStorage.removeItem("token");
+  async function authFetch(p,opt={}) {
+    const h=Object.assign({"Content-Type":"application/json","Authorization":"Bearer "+token()},opt.headers||{});
+    const r=await fetch(API+p,{...opt,headers:h});
+    if(r.status===401)throw new Error("Unauthorized");
+    if(!r.ok)throw new Error("HTTP "+r.status);
+    return r.json();
+  }
+  function login(){
+    nav.hidden=true;
+    root.innerHTML=`<h2>Login</h2>
+      <div><input id=u value=admin><input id=p type=password value=admin123></div>
+      <button id=l>Login</button><div id=m></div>`;
+    $("#l").onclick=async()=>{
+      try{
+        const r=await fetch(API+"/users/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username:u.value,password:p.value})});
+        const j=await r.json();setT(j.access_token);render("dash");
+      }catch(e){m.textContent=e.message}
+    };
+  }
+  async function dash(){root.innerHTML="<h2>Dashboard</h2>";}
+  async function countries(){const j=await authFetch("/countries/");root.innerHTML="<h2>Countries</h2><pre>"+JSON.stringify(j.items,null,2)+"</pre>";}
+  async function networks(){const j=await authFetch("/networks/");root.innerHTML="<h2>Networks</h2><pre>"+JSON.stringify(j.items,null,2)+"</pre>";}
+  async function offers(){const j=await authFetch("/offers/");root.innerHTML="<h2>Offers</h2><pre>"+JSON.stringify(j.items,null,2)+"</pre>";}
+  async function settings(){
+    const im=await authFetch("/settings/imap");
+    root.innerHTML=`<h2>IMAP Settings</h2>
+      <input id=host placeholder=host value="${im.host}">
+      <input id=user placeholder=user value="${im.username}">
+      <input id=pass type=password placeholder=pass value="${im.password}">
+      <button id=save>Save</button><button id=test>Test</button><button id=folders>Fetch Folders</button><div id=m></div>`;
+    $("#save").onclick=()=>authFetch("/settings/imap",{method:"POST",body:JSON.stringify({host:host.value,username:user.value,password:pass.value})}).then(()=>m.textContent="Saved");
+    $("#test").onclick=()=>authFetch("/settings/imap/test",{method:"POST",body:JSON.stringify({host:host.value,username:user.value,password:pass.value})}).then(r=>m.textContent="OK "+(r.greeting||"")).catch(e=>m.textContent=e);
+    $("#folders").onclick=()=>authFetch("/settings/imap/folders",{method:"POST",body:JSON.stringify({host:host.value,username:user.value,password:pass.value})}).then(r=>m.textContent=r.folders.join(", "));
+  }
+  async function render(v){try{await authFetch("/users/me");nav.hidden=false;if(v==="countries")return countries();if(v==="networks")return networks();if(v==="offers")return offers();if(v==="settings")return settings();return dash();}catch{login();}}
+  nav.addEventListener("click",e=>{const v=e.target.dataset.v;if(v)render(v);});
+  $("#logout").onclick=()=>{clrT();login();};
+  render("dash");
+})();

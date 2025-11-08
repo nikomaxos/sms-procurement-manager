@@ -1,0 +1,82 @@
+import json, os
+from fastapi import APIRouter, HTTPException, Header
+from pydantic import BaseModel, Field
+from typing import Optional
+from app.core.auth import verify_token
+
+DATA_DIR = os.getenv("DATA_DIR", "/app/data")
+SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
+os.makedirs(DATA_DIR, exist_ok=True)
+if not os.path.exists(SETTINGS_FILE):
+    with open(SETTINGS_FILE, "w") as f:
+        json.dump({
+            "imap": {
+                "host": "", "port": 993, "username": "", "password": "",
+                "ssl": True, "folder": "INBOX", "enabled": False
+            },
+            "scrape": {
+                "enabled": False, "interval_minutes": 30, "user_agent": "Mozilla/5.0",
+                "max_concurrency": 4, "start_urls": [], "allow_domains": [],
+                "block_domains": [], "render_js": False
+            }
+        }, f)
+
+router = APIRouter(prefix="/settings", tags=["settings"])
+
+def _auth_ok(authorization: Optional[str]):
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Missing token")
+    verify_token(authorization.split(" ", 1)[1])
+
+def _load():
+    with open(SETTINGS_FILE, "r") as f:
+        return json.load(f)
+
+def _save(obj):
+    with open(SETTINGS_FILE, "w") as f:
+        json.dump(obj, f)
+
+class ImapCfg(BaseModel):
+    host: str = ""
+    port: int = 993
+    username: str = ""
+    password: str = ""
+    ssl: bool = True
+    folder: str = "INBOX"
+    enabled: bool = False
+
+class ScrapeCfg(BaseModel):
+    enabled: bool = False
+    interval_minutes: int = Field(30, ge=1, le=1440)
+    user_agent: str = "Mozilla/5.0"
+    max_concurrency: int = Field(4, ge=1, le=64)
+    start_urls: list[str] = []
+    allow_domains: list[str] = []
+    block_domains: list[str] = []
+    render_js: bool = False
+
+@router.get("/imap")
+def get_imap(authorization: Optional[str] = Header(None)):
+    _auth_ok(authorization)
+    return _load()["imap"]
+
+@router.post("/imap")
+def set_imap(cfg: ImapCfg, authorization: Optional[str] = Header(None)):
+    _auth_ok(authorization)
+    data = _load()
+    data["imap"] = cfg.model_dump()
+    _save(data)
+    return {"ok": True, "imap": data["imap"]}
+
+@router.get("/scrape")
+def get_scrape(authorization: Optional[str] = Header(None)):
+    _auth_ok(authorization)
+    return _load()["scrape"]
+
+@router.post("/scrape")
+def set_scrape(cfg: ScrapeCfg, authorization: Optional[str] = Header(None)):
+    _auth_ok(authorization)
+    data = _load()
+    data["scrape"] = cfg.model_dump()
+    _save(data)
+    return {"ok": True, "scrape": data["scrape"]}

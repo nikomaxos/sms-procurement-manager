@@ -1,0 +1,34 @@
+:root{
+  --bg-0:#f7efe6; --bg-1:#fff7ef; --bg-2:#fde9d8;
+  --text-0:#2b1e12; --text-1:#4b2e16; --border:#e4c9ad;
+  --primary:#b45309; --accent:#d97706;
+  --ok:#16a34a; --info:#2563eb; --warn:#f59e0b; --danger:#dc2626;
+  --shadow:0 6px 14px rgba(124,90,60,.12); --radius:12px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg-0);color:var(--text-0);font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial}
+#app{padding:16px}
+.header{position:sticky;top:0;z-index:20;background:linear-gradient(180deg,rgba(253,233,216,.95),rgba(247,239,230,.95));border-bottom:1px solid var(--border)}
+.nav{display:flex;gap:10px;align-items:center;padding:10px 16px}
+.nav .brand{font-weight:800;margin-right:auto}
+.card{background:var(--bg-1);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);padding:12px;margin:10px 0}
+.btn{border:none;border-radius:999px;color:#fff;background:var(--primary);padding:6px 10px;cursor:pointer;box-shadow:var(--shadow);font-size:14px}
+.btn.green{background:var(--ok)} .btn.blue{background:var(--info)} .btn.yellow{background:var(--warn);color:#3b270e} .btn.red{background:var(--danger)}
+input,select,textarea{background:#fff;color:var(--text-0);border:1px solid var(--border);border-radius:10px;padding:6px 8px;font-size:14px}
+.table{width:100%;border:1px solid var(--border);background:#fff;border-radius:12px;overflow:hidden}
+.table th,.table td{padding:8px;border-bottom:1px solid var(--border);text-align:left;font-size:14px}
+
+/* Compact chips */
+.pill-list{list-style:none;margin:6px 0;padding:0}
+.pill-row{display:flex;gap:6px;align-items:center;margin:4px 0}
+.pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#fff;border:1px solid var(--border);font-size:13px}
+
+/* Accordion for spatial economy */
+details.accordion{border:1px solid var(--border);border-radius:10px;background:#fff;margin:8px 0}
+details.accordion > summary{cursor:pointer;padding:8px 10px;font-weight:700;background:var(--bg-2);border-radius:10px}
+details.accordion[open] > summary{border-bottom:1px solid var(--border);border-bottom-left-radius:0;border-bottom-right-radius:0}
+.acc-body{padding:10px}
+.grid-2{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.lbl{min-width:120px;font-weight:600}
+.small-note{font-size:12px;opacity:.8}

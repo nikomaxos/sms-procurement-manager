@@ -1,0 +1,74 @@
+from fastapi import APIRouter, HTTPException, Header
+from typing import Optional, Dict, Any, List
+from pathlib import Path
+import json
+
+from app.core.auth import verify_token
+
+router = APIRouter(prefix="/offers", tags=["offers"])
+FILE = Path("/app/data/offers.json")
+
+def _auth(a: Optional[str]):
+    if not a or not a.startswith("Bearer "): 
+        raise HTTPException(401, "Unauthorized")
+    verify_token(a.split(" ",1)[1])
+
+def _load() -> List[Dict[str, Any]]:
+    if FILE.exists():
+        try:
+            return json.loads(FILE.read_text("utf-8"))
+        except Exception:
+            pass
+    seed: List[Dict[str,Any]] = []
+    FILE.parent.mkdir(parents=True, exist_ok=True)
+    FILE.write_text(json.dumps(seed, indent=2), "utf-8")
+    return seed
+
+def _save(items: List[Dict[str, Any]]):
+    FILE.write_text(json.dumps(items, indent=2, ensure_ascii=False), "utf-8")
+
+@router.get("/")
+def list_offers(authorization: Optional[str] = Header(None), limit: int = 50, offset: int = 0):
+    _auth(authorization)
+    items = _load()
+    total = len(items)
+    return {"items": items[offset:offset+limit], "total": total}
+
+@router.post("/")
+def create_offer(body: Dict[str, Any], authorization: Optional[str] = Header(None)):
+    _auth(authorization)
+    items = _load()
+    nid = (max([x["id"] for x in items]) + 1) if items else 1
+    title = str(body.get("title","")).strip()
+    if not title: raise HTTPException(400, "title required")
+    rec = {
+        "id": nid,
+        "title": title,
+        "country_code": str(body.get("country_code","")).upper().strip() or None,
+        "network_id": body.get("network_id"),
+        "currency": str(body.get("currency","USD")).upper(),
+        "prices": body.get("prices", []),           # [{supplier_username, price}]
+        "attributes": body.get("attributes", {}),   # {valid_from, valid_to, notes, ...}
+        "tags": body.get("tags", [])                # ["promo","otp",...]
+    }
+    items.append(rec); _save(items)
+    return {"ok": True, "item": rec}
+
+@router.put("/{item_id}")
+def update_offer(item_id: int, body: Dict[str, Any], authorization: Optional[str] = Header(None)):
+    _auth(authorization)
+    items = _load()
+    for x in items:
+        if x["id"] == item_id:
+            for k in ("title","country_code","network_id","currency","prices","attributes","tags"):
+                if k in body: x[k] = body[k]
+            _save(items); return {"ok": True, "item": x}
+    raise HTTPException(404, "not found")
+
+@router.delete("/{item_id}")
+def delete_offer(item_id: int, authorization: Optional[str] = Header(None)):
+    _auth(authorization)
+    items = _load()
+    n = [x for x in items if x["id"] != item_id]
+    if len(n) == len(items): raise HTTPException(404, "not found")
+    _save(n); return {"ok": True}

@@ -1,0 +1,25 @@
+from datetime import datetime, timezone
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy.orm import Session
+from sqlalchemy import func
+from app.core.database import get_db
+from app.core.auth import get_current_user
+from app.models.models import OfferCurrent
+
+router = APIRouter(prefix="/hot", tags=["What's Hot"])
+
+@router.get("/", dependencies=[Depends(get_current_user)])
+def whats_hot(db: Session = Depends(get_db), day: str = Query(None)):
+    # day format: YYYY-MM-DD; default = today (UTC)
+    if day:
+        start = datetime.fromisoformat(day).replace(tzinfo=timezone.utc)
+    else:
+        start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    end = start.replace(hour=23, minute=59, second=59, microsecond=999999)
+    q = (
+        db.query(OfferCurrent.network_id, OfferCurrent.route_type, func.count(OfferCurrent.id))
+          .filter(OfferCurrent.updated_at >= start, OfferCurrent.updated_at <= end)
+          .group_by(OfferCurrent.network_id, OfferCurrent.route_type)
+          .order_by(func.count(OfferCurrent.id).desc())
+    )
+    return [{"network_id": n, "route_type": rt, "updates": cnt} for (n, rt, cnt) in q.all()]

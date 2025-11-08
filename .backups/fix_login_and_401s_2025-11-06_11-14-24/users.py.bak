@@ -1,0 +1,86 @@
+from fastapi import APIRouter, Depends
+from fastapi.security import OAuth2PasswordRequestForm
+from app.core.database import engine
+from app.core.auth import authenticate, create_token, get_current_user
+
+router = APIRouter(prefix="/users", tags=["Users"])
+
+@router.post("/login")
+def login(form: OAuth2PasswordRequestForm = Depends()):
+    user = authenticate(form.username, form.password)
+    if not user:
+        return {"detail":"Unauthorized"}, 401
+    return {"access_token": create_token(user), "token_type": "bearer"}
+
+@router.get("/me")
+def me(current = Depends(get_current_user)):
+    return current
+
+
+def _row_to_user_obj(row):
+    return {"id": row.id, "username": row.username, "is_admin": bool(row.is_admin)}
+
+@router.get("/", tags=["Users"])
+def list_users(current=Depends(get_current_user)):
+    if not current.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Admin only")
+    with engine.begin() as c:
+        rows = c.execute(text("SELECT id, username, COALESCE(is_admin,false) AS is_admin FROM users ORDER BY id")).mappings().all()
+    return [_row_to_user_obj(r) for r in rows]
+
+@router.post("/", tags=["Users"])
+def create_user(payload: dict, current=Depends(get_current_user)):
+    if not current.get("is_admin"):
+        raise HTTPException(403, "Admin only")
+    u = (payload.get("username") or "").strip()
+    p = (payload.get("password") or "").strip()
+    is_admin = bool(payload.get("is_admin", False))
+    if not u or not p:
+        raise HTTPException(400, "Username and password required")
+    from passlib.hash import bcrypt
+    ph = bcrypt.hash(p)
+    with engine.begin() as c:
+        try:
+            c.execute(text("INSERT INTO users(username,password_hash,is_admin) VALUES(:u,:ph,:ad)"),
+                      dict(u=u, ph=ph, ad=is_admin))
+        except Exception as e:
+            raise HTTPException(400, f"Create failed: {e}")
+    return {"ok": True}
+
+@router.delete("/{user_id}", tags=["Users"])
+def delete_user(user_id: int, current=Depends(get_current_user)):
+    if not current.get("is_admin"):
+        raise HTTPException(403, "Admin only")
+    if user_id == current["id"]:
+        raise HTTPException(400, "Cannot delete yourself")
+    with engine.begin() as c:
+        c.execute(text("DELETE FROM users WHERE id=:i"), dict(i=user_id))
+    return {"ok": True}
+
+@router.post("/{user_id}/password", tags=["Users"])
+def admin_set_password(user_id: int, payload: dict, current=Depends(get_current_user)):
+    if not current.get("is_admin"):
+        raise HTTPException(403, "Admin only")
+    p = (payload.get("password") or "").strip()
+    if not p: raise HTTPException(400, "Password required")
+    from passlib.hash import bcrypt
+    ph = bcrypt.hash(p)
+    with engine.begin() as c:
+        c.execute(text("UPDATE users SET password_hash=:ph WHERE id=:i"), dict(ph=ph, i=user_id))
+    return {"ok": True}
+
+@router.post("/change_password", tags=["Users"])
+def self_change_password(payload: dict, current=Depends(get_current_user)):
+    old = (payload.get("old_password") or "").strip()
+    new = (payload.get("new_password") or "").strip()
+    if len(new) < 6:
+        raise HTTPException(400, "New password too short")
+    from passlib.hash import bcrypt
+    # fetch current hash
+    with engine.begin() as c:
+        row = c.execute(text("SELECT password_hash FROM users WHERE id=:i"), dict(i=current["id"])).first()
+        if not row: raise HTTPException(404, "User not found")
+        if not bcrypt.verify(old, row[0]): raise HTTPException(401, "Old password incorrect")
+        c.execute(text("UPDATE users SET password_hash=:ph WHERE id=:i"),
+                  dict(ph=bcrypt.hash(new), i=current["id"]))
+    return {"ok": True}

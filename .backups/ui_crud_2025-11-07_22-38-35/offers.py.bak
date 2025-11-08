@@ -1,0 +1,16 @@
+from fastapi import APIRouter, HTTPException, Header, Query
+from typing import Optional
+from app.core.auth import verify_token
+
+router = APIRouter(prefix="/offers", tags=["offers"])
+
+def _auth_ok(authorization: Optional[str]):
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Missing token")
+    verify_token(authorization.split(" ", 1)[1])
+
+@router.get("/")
+def list_offers(limit: int = Query(50, ge=1, le=500), offset: int = Query(0, ge=0), authorization: Optional[str] = Header(None)):
+    _auth_ok(authorization)
+    items = []  # stub: no data yet
+    return {"items": items, "total": len(items), "limit": limit, "offset": offset}

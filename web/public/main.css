@@ -1,0 +1,35 @@
+:root{
+  --bg:#0f172a;--card:#111827;--bd:#374151;--fg:#e5e7eb;--mut:#9ca3af;
+  --ok:#10b981;--warn:#f59e0b;--err:#ef4444;--accent:#0099c7;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif}
+header{padding:12px 16px;border-bottom:1px solid var(--bd);display:flex;gap:12px;align-items:center}
+header h1{font-size:16px;margin:0;flex:1}
+nav button{margin-right:8px}
+.wrap{max-width:1100px;margin:24px auto;padding:0 16px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:16px}
+h2{margin:0 0 12px}
+h3{margin:16px 0 8px}
+label{display:block;margin:6px 0;color:var(--mut);font-size:13px}
+input,select,textarea{width:100%;padding:8px 10px;border-radius:8px;border:1px solid var(--bd);background:#0b1220;color:var(--fg)}
+.grid-2{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+.grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.grid-4{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.actions{margin-top:12px;display:flex;gap:8px;flex-wrap:wrap}
+button{padding:8px 12px;border:1px solid var(--bd);background:#0b1220;color:var(--fg);border-radius:10px;cursor:pointer}
+button.primary{background:var(--accent);border-color:#03658a;color:#021a22}
+button.ghost{background:transparent}
+.btn-ok{background:var(--ok);border-color:#065f46;color:#062a22}
+.btn-warn{background:var(--warn);border-color:#8a5a03;color:#221a06}
+.btn-err{background:var(--err);border-color:#7f1d1d;color:#1f0a0a}
+.table{width:100%;border-collapse:collapse;margin-top:10px}
+.table th,.table td{border:1px solid var(--bd);padding:8px 10px;text-align:left}
+.muted{color:var(--mut)}
+pre{white-space:pre-wrap;background:#0b1220;border:1px solid var(--bd);padding:12px;border-radius:10px}
+.badge{display:inline-block;padding:2px 8px;border-radius:999px;border:1px solid var(--bd);font-size:12px}
+.flex{display:flex;gap:12px;align-items:center}
+select[multiple]{min-height:120px}
+.notice{padding:8px 10px;border:1px solid var(--bd);border-radius:8px;background:#0b1220;margin:10px 0}
+.hidden{display:none}

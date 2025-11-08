@@ -1,0 +1,41 @@
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+import importlib, pkgutil, logging
+
+app = FastAPI(title="SMS Procurement Manager API", version="1.0")
+
+# Permissive CORS (Bearer tokens; no cookies needed)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.get("/health")
+def health():
+    return {"ok": True}
+
+# Try to include every router that has `router`
+def _try_mount(modname: str) -> bool:
+    log = logging.getLogger("boot")
+    try:
+        m = importlib.import_module(f"app.routers.{modname}")
+        router = getattr(m, "router", None)
+        if router:
+            app.include_router(router)
+            log.info(f"Mounted router: {modname}")
+            return True
+        log.warning(f"No 'router' in {modname}")
+    except Exception as e:
+        log.error(f"Skipping router {modname}: {e}")
+    return False
+
+try:
+    import app.routers as pkg
+    for _, name, ispkg in pkgutil.iter_modules(pkg.__path__):
+        if not ispkg:
+            _try_mount(name)
+except Exception as e:
+    logging.getLogger("boot").error(f"Router scan failed: {e}")

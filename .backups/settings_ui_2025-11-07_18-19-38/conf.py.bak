@@ -1,0 +1,21 @@
+from fastapi import APIRouter, HTTPException, Header
+from typing import Optional
+from app.core.auth import verify_token
+
+router = APIRouter(prefix="/conf", tags=["conf"])
+
+def _auth_ok(authorization: Optional[str]):
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Missing token")
+    verify_token(authorization.split(" ", 1)[1])
+
+@router.get("/enums")
+def enums(authorization: Optional[str] = Header(None)):
+    _auth_ok(authorization)
+    # stub lists (extend when you have real data)
+    return {
+        "countries": ["GR", "RO", "BG", "ES"],
+        "mccmnc":   ["20201","22601","28401","21401"],
+        "vendors":  ["VendorA","VendorB","VendorC"],
+        "tags":     ["whitelist","blacklist","promo","otp"]
+    }

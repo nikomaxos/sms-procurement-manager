@@ -1,0 +1,132 @@
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Header
+from pydantic import BaseModel, Field
+from typing import Optional
+from sqlalchemy.orm import Session
+from sqlalchemy import text
+from jose import jwt, JWTError
+
+from app.core.database import get_db, engine
+from app.core.auth import verify_password, get_password_hash, create_access_token, SECRET_KEY, ALGORITHM
+
+router = APIRouter(prefix="/users", tags=["users"])
+
+def _ensure_users():
+    create_sql = """
+    CREATE TABLE IF NOT EXISTS users(
+      id SERIAL PRIMARY KEY,
+      username VARCHAR(150) UNIQUE NOT NULL,
+      password_hash VARCHAR(255) NOT NULL,
+      role VARCHAR(32) DEFAULT 'user',
+      is_active BOOLEAN DEFAULT TRUE
+    );
+    """
+    with engine.begin() as c:
+        c.execute(text(create_sql))
+        cnt = c.execute(text("SELECT COUNT(*) FROM users")).scalar_one()
+        if cnt == 0:
+            c.execute(
+                text("INSERT INTO users(username, password_hash, role, is_active) VALUES (:u,:p,:r,TRUE)"),
+                {"u": "admin", "p": get_password_hash("admin123"), "r": "admin"}
+            )
+
+class LoginPayload(BaseModel):
+    username: str
+    password: str
+
+class NewUserPayload(BaseModel):
+    username: str = Field(min_length=3, max_length=150)
+    password: str = Field(min_length=4, max_length=128)
+    role: str = "user"
+    is_active: bool = True
+
+class PWChangePayload(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=4, max_length=128)
+
+def _get_user_row(db: Session, username: str):
+    return db.execute(
+        text("SELECT id, username, password_hash, role, is_active FROM users WHERE username=:u"),
+        {"u": username}
+    ).fetchone()
+
+@router.post("/login")
+async def login(request: Request, db: Session = Depends(get_db)):
+    _ensure_users()
+    body: Optional[LoginPayload] = None
+    try:
+        body = LoginPayload(**(await request.json()))
+    except Exception:
+        form = await request.form()
+        if "username" in form and "password" in form:
+            body = LoginPayload(username=form["username"], password=form["password"])
+    if not body:
+        raise HTTPException(status_code=422, detail="username/password required")
+
+    row = _get_user_row(db, body.username)
+    if not row or not verify_password(body.password, row[2]):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+
+    token = create_access_token({"sub": row[1], "role": row[3]})
+    return {"access_token": token, "token_type": "bearer"}
+
+def _require_bearer(authorization: Optional[str]) -> str:
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Missing Bearer token")
+    return authorization.split(" ", 1)[1]
+
+@router.get("/me")
+def me(authorization: Optional[str] = Header(default=None), db: Session = Depends(get_db)):
+    token = _require_bearer(authorization)
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    username = payload.get("sub")
+    if not username:
+        raise HTTPException(status_code=401, detail="Invalid token payload")
+
+    row = _get_user_row(db, username)
+    if not row:
+        raise HTTPException(status_code=401, detail="User not found")
+    return {"id": row[0], "username": row[1], "role": row[3], "is_active": row[4]}
+
+@router.post("/")
+def create_user(body: NewUserPayload, authorization: Optional[str] = Header(default=None), db: Session = Depends(get_db)):
+    token = _require_bearer(authorization)
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    if payload.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    exists = db.execute(text("SELECT 1 FROM users WHERE username=:u"), {"u": body.username}).fetchone()
+    if exists:
+        raise HTTPException(status_code=409, detail="Username already exists")
+
+    db.execute(
+        text("INSERT INTO users(username, password_hash, role, is_active) VALUES (:u,:p,:r,:a)"),
+        {"u": body.username, "p": get_password_hash(body.password), "r": body.role, "a": body.is_active}
+    )
+    db.commit()
+    return {"ok": True}
+
+@router.post("/change_password")
+def change_password(body: PWChangePayload, authorization: Optional[str] = Header(default=None), db: Session = Depends(get_db)):
+    token = _require_bearer(authorization)
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    username = payload.get("sub")
+    if not username:
+        raise HTTPException(status_code=401, detail="Invalid token payload")
+
+    row = _get_user_row(db, username)
+    if not row or not verify_password(body.current_password, row[2]):
+        raise HTTPException(status_code=401, detail="Wrong current password")
+
+    db.execute(text("UPDATE users SET password_hash=:p WHERE id=:id"),
+               {"p": get_password_hash(body.new_password), "id": row[0]})
+    db.commit()
+    return {"ok": True}

@@ -1,0 +1,34 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: docker-postgres-1
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: smsdb
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ..
+    container_name: docker-worker-1
+    command: ["python3","-u","app/runloop.py"]
+    environment:
+      DB_URL: postgresql://postgres:postgres@postgres:5432/smsdb
+      IMAP_HOST: ${IMAP_HOST}
+      IMAP_USER: ${IMAP_USER}
+      IMAP_PASSWORD: ${IMAP_PASSWORD}
+      IMAP_FOLDER: ${IMAP_FOLDER:-INBOX}
+      IMAP_SSL: ${IMAP_SSL:-true}
+      REFRESH_MINUTES: ${REFRESH_MINUTES:-5}
+      INGEST_LIMIT: ${INGEST_LIMIT:-50}
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
+volumes:
+  pgdata:

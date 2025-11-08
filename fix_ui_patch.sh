@@ -1,0 +1,200 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$HOME/sms-procurement-manager"
+WEBPUB="$ROOT/web/public"
+TS="$(date +%F_%H-%M-%S)"
+BACK="$ROOT/.backups/ui_patch_file_$TS"
+mkdir -p "$BACK"
+cp -a "$WEBPUB/main.js" "$BACK/main.js.bak" || true
+
+echo "• Applying UI patch (IMAP folders + Settings tabs)…"
+
+cat > "$WEBPUB/main.js" <<'JS'
+(() => {
+  const $ = s => document.querySelector(s);
+  const root = $("#root"), nav = $("#nav");
+  const API = `http://${location.hostname}:8010`;
+  const token = () => localStorage.getItem("token") || "";
+  const setToken = t => localStorage.setItem("token", t);
+  const clearToken = () => localStorage.removeItem("token");
+
+  async function authFetch(p, opt = {}) {
+    const h = { "Content-Type": "application/json", "Authorization": "Bearer " + token() };
+    const r = await fetch(API + p, { ...opt, headers: h });
+    if (r.status === 401) throw new Error("Unauthorized");
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.json();
+  }
+
+  async function viewSettings(tab = "imap") {
+    const im = await authFetch("/settings/imap");
+    const sc = await authFetch("/settings/scrape").catch(() => ({ enabled: false }));
+    root.innerHTML = `
+      <h2>Settings</h2>
+      <div class="actions">
+        <button id="tab_imap" class="${tab === 'imap' ? 'primary' : ''}">Email (IMAP)</button>
+        <button id="tab_scrape" class="${tab === 'scrape' ? 'primary' : ''}">Scraping Settings</button>
+      </div>
+      <div id="pane"></div>`;
+    $("#tab_imap").onclick = () => viewSettings("imap");
+    $("#tab_scrape").onclick = () => viewSettings("scrape");
+
+    if (tab === "imap") {
+      $("#pane").innerHTML = `
+        <h3>Email (IMAP)</h3>
+        <div class="grid-4">
+          <div><label>Host</label><input id="im_host" value="${im.host || ""}"></div>
+          <div><label>Port</label><input id="im_port" type="number" value="${im.port ?? 993}"></div>
+          <div><label>Username</label><input id="im_user" value="${im.username || ""}"></div>
+          <div><label>Password</label><input id="im_pass" type="password" value="${im.password || ""}"></div>
+        </div>
+        <div class="grid-3">
+          <div><label>SSL</label><input id="im_ssl" type="checkbox" ${im.ssl ? "checked" : ""}></div>
+          <div><label>Default Folder</label><input id="im_folder" value="${im.folder || "INBOX"}"></div>
+          <div><label>Enabled</label><input id="im_enabled" type="checkbox" ${im.enabled ? "checked" : ""}></div>
+        </div>
+        <div class="actions">
+          <button id="im_save" class="primary">Save</button>
+          <button id="im_test">Test connection</button>
+          <button id="im_fetch">Fetch folders</button>
+        </div>
+        <div id="im_msg"></div>
+        <div id="im_folders" class="hidden">
+          <h3>IMAP Folders</h3>
+          <div class="grid-2">
+            <div>
+              <label>Available</label>
+              <select id="im_folders_list" multiple></select>
+            </div>
+            <div>
+              <label>Selected</label>
+              <div id="im_selected" class="notice">(none)</div>
+            </div>
+          </div>
+        </div>`;
+      $("#im_save").onclick = async () => {
+        await authFetch("/settings/imap", {
+          method: "POST",
+          body: JSON.stringify({
+            host: $("#im_host").value,
+            port: Number($("#im_port").value),
+            username: $("#im_user").value,
+            password: $("#im_pass").value,
+            ssl: $("#im_ssl").checked,
+            folder: $("#im_folder").value,
+            enabled: $("#im_enabled").checked
+          })
+        });
+        $("#im_msg").textContent = "Saved.";
+      };
+      $("#im_test").onclick = async () => {
+        $("#im_msg").textContent = "Testing…";
+        try {
+          const r = await authFetch("/settings/imap/test", {
+            method: "POST",
+            body: JSON.stringify({
+              host: $("#im_host").value,
+              port: Number($("#im_port").value),
+              username: $("#im_user").value,
+              password: $("#im_pass").value,
+              ssl: $("#im_ssl").checked
+            })
+          });
+          $("#im_msg").textContent = "OK — " + (r.greeting || "connected");
+        } catch (e) { $("#im_msg").textContent = e.message; }
+      };
+      $("#im_fetch").onclick = async () => {
+        $("#im_msg").textContent = "Fetching folders…";
+        try {
+          const r = await authFetch("/settings/imap/folders", {
+            method: "POST",
+            body: JSON.stringify({
+              host: $("#im_host").value,
+              port: Number($("#im_port").value),
+              username: $("#im_user").value,
+              password: $("#im_pass").value,
+              ssl: $("#im_ssl").checked
+            })
+          });
+          const list = $("#im_folders_list");
+          list.innerHTML = "";
+          (r.folders || []).forEach(f => {
+            if (!f) return;
+            const opt = document.createElement("option");
+            opt.value = f; opt.textContent = f;
+            list.appendChild(opt);
+          });
+          if ((r.folders || []).length > 0)
+            $("#im_folders").classList.remove("hidden");
+          list.onchange = () => {
+            const sel = [...list.selectedOptions].map(o => o.value);
+            $("#im_selected").textContent = sel.join(", ") || "(none)";
+          };
+          $("#im_msg").textContent = `Found ${(r.folders || []).length} folder(s).`;
+        } catch (e) { $("#im_msg").textContent = e.message; }
+      };
+    } else {
+      $("#pane").innerHTML = `
+        <h3>Scraping Settings</h3>
+        <label>Enabled</label><input id=sc_enabled type=checkbox ${sc.enabled ? "checked" : ""}>
+        <label>User-Agent</label><input id=sc_ua value="${sc.user_agent || "Mozilla/5.0"}">
+        <button id=sc_save class=primary>Save</button>
+        <div id=sc_msg></div>`;
+      $("#sc_save").onclick = async () => {
+        await authFetch("/settings/scrape", {
+          method: "POST",
+          body: JSON.stringify({
+            enabled: $("#sc_enabled").checked,
+            user_agent: $("#sc_ua").value
+          })
+        });
+        $("#sc_msg").textContent = "Saved.";
+      };
+    }
+  }
+
+  async function render(v) {
+    try {
+      await authFetch("/users/me");
+      nav.hidden = false;
+      if (v === "settings") return viewSettings();
+      root.innerHTML = "<h2>Dashboard</h2>";
+    } catch { showLogin(); }
+  }
+
+  function showLogin() {
+    nav.hidden = true;
+    root.innerHTML = `
+      <h2>Login</h2>
+      <input id=u value=admin>
+      <input id=p type=password value=admin123>
+      <button id=loginBtn class=primary>Login</button>
+      <div id=msg></div>`;
+    $("#loginBtn").onclick = async () => {
+      try {
+        const r = await fetch(API + "/users/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username: u.value, password: p.value })
+        });
+        const j = await r.json();
+        setToken(j.access_token);
+        render("dashboard");
+      } catch (e) { $("#msg").textContent = e.message; }
+    };
+  }
+
+  nav.addEventListener("click", e => {
+    const v = e.target.dataset.view;
+    if (!v) return;
+    render(v);
+  });
+  $("#logout").onclick = () => { clearToken(); showLogin(); };
+  render("dashboard");
+})();
+JS
+
+chmod 0644 "$WEBPUB/main.js"
+docker compose up -d --no-deps --force-recreate web
+echo "✓ Patch applied. Refresh browser with Ctrl+Shift+R."

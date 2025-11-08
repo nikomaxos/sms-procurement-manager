@@ -1,0 +1,25 @@
+{
+  "countries": [
+    "GR",
+    "RO",
+    "BG",
+    "ES"
+  ],
+  "mccmnc": [
+    "20201",
+    "22601",
+    "28401",
+    "21401"
+  ],
+  "vendors": [
+    "VendorA",
+    "VendorB",
+    "VendorC"
+  ],
+  "tags": [
+    "whitelist",
+    "blacklist",
+    "promo",
+    "otp"
+  ]
+}

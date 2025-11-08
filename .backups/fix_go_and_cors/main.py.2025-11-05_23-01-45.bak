@@ -1,0 +1,47 @@
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.core.auth import seed_admin
+from app.migrations_domain import migrate_domain
+from app.routers.users import router as users
+from app.routers.conf import router as conf
+from app.routers.countries import router as countries
+from app.routers.networks import router as networks
+from app.routers.suppliers import router as suppliers
+from app.routers.connections import router as connections
+from app.routers.offers import router as offers
+from app.routers.parsers import router as parsers
+from app.routers.metrics import router as metrics
+from app.routers.settings import router as settings
+
+app = FastAPI(title="SMS Procurement Manager", version="0.2")
+app.add_middleware(CORSMiddleware, allow_origins=['*'], allow_credentials=False, allow_methods=['*'], allow_headers=['*'])
+
+# Permissive CORS (we use Bearer tokens, no cookies)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.on_event("startup")
+def _startup():
+    seed_admin()
+    migrate_domain()
+
+app.include_router(users)
+app.include_router(conf)
+app.include_router(countries)
+app.include_router(networks)
+app.include_router(suppliers)
+app.include_router(connections)
+app.include_router(offers)
+app.include_router(parsers)
+app.include_router(metrics)
+app.include_router(settings)
+
+@app.get("/")
+def root():
+    return {"ok": True}

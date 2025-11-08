@@ -1,0 +1,42 @@
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+import importlib, pkgutil, sys
+from typing import Optional
+
+app = FastAPI(title="SMS Procurement Manager API")
+
+# Global, permissive CORS (Bearer only -> no cookies)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"],
+)
+
+# Include users router explicitly (login endpoint guaranteed)
+try:
+    from app.routers import users as _users
+    app.include_router(_users.router)
+except Exception as e:
+    print("WARNING: users router failed to mount:", repr(e), file=sys.stderr)
+
+# Best-effort auto-include any other router modules exposing `router`
+try:
+    import app.routers as _rpk
+    for _m in pkgutil.iter_modules(_rpk.__path__):
+        if _m.name == "users":
+            continue
+        try:
+            _mod = importlib.import_module(f"app.routers.{_m.name}")
+            if hasattr(_mod, "router"):
+                app.include_router(_mod.router)
+        except Exception as _e:
+            print(f"Skipping router {_m.name}: {_e!r}", file=sys.stderr)
+except Exception as e:
+    print("Router autodiscovery failed:", repr(e), file=sys.stderr)
+
+@app.get("/health")
+def health():
+    return {"ok": True}

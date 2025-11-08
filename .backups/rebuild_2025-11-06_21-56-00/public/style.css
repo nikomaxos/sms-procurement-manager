@@ -1,0 +1,19 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');
+:root{ --bg:#0b1220; --card:#121a2b; --text:#e7ecf6; --muted:#9fb0d1; --accent:#61dafb; }
+*{ box-sizing:border-box }
+html,body{ margin:0; height:100%; }
+body{ font-family:Inter,system-ui,Segoe UI,Roboto,Arial; background:var(--bg); color:var(--text); }
+.container{ max-width:1100px; margin:32px auto; padding:0 16px; }
+.card{ background:var(--card); border-radius:16px; padding:20px; box-shadow:0 10px 30px rgba(0,0,0,.3) }
+input,select,button{ border-radius:12px; border:1px solid #223; padding:10px 12px; background:#0f172a; color:var(--text) }
+button{ background:#1f2a44; cursor:pointer }
+button:hover{ filter:brightness(1.1) }
+.grid{ display:grid; gap:16px }
+.grid-2{ grid-template-columns:1fr 1fr }
+.kv{ display:flex; gap:10px; align-items:center; }
+.badge{ padding:2px 8px; border-radius:999px; background:#223; color:var(--muted); font-size:12px; }
+h1{ font-size:22px; margin:0 0 16px }
+h2{ font-size:18px; margin:24px 0 8px }
+.table{ width:100%; border-collapse:collapse }
+.table th, .table td{ border-bottom:1px solid #1d2740; padding:10px 8px; text-align:left; font-size:14px }
+.toolbar{ display:flex; gap:10px; margin-bottom:12px; flex-wrap:wrap }

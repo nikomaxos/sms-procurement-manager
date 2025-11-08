@@ -1,0 +1,71 @@
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
+from sqlalchemy import select
+from typing import Optional
+from app.core.database import SessionLocal
+from app.core.auth import create_access_token, verify_password, get_current_user
+from app.models.models import User  # assumes models/models.py defines User
+
+router = APIRouter()
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+class LoginIn(BaseModel):
+    username: Optional[str] = None
+    password: Optional[str] = None
+
+@router.post("/users/login")
+async def login(request: Request, body: Optional[LoginIn] = None, db: Session = Depends(get_db)):
+    # 1st try JSON body
+    username = (body.username if body else None) if body else None
+    password = (body.password if body else None) if body else None
+
+    # If missing, try classic form payload
+    if not username or not password:
+        try:
+            form = await request.form()
+            username = username or form.get("username")
+            password = password or form.get("password")
+        except Exception:
+            pass
+
+    if not username or not password:
+        raise HTTPException(status_code=422, detail="username/password required")
+
+    u = db.execute(select(User).where(User.username == username)).scalar_one_or_none()
+    if not u or not verify_password(password, u.password_hash):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+
+    token = create_access_token({"sub": str(u.id), "username": u.username, "is_admin": bool(getattr(u, "is_admin", False))})
+    return {"access_token": token, "token_type": "bearer"}
+
+@router.get("/users/me")
+def me(current = Depends(get_current_user)):
+    return {"id": current.id, "username": current.username, "is_admin": bool(getattr(current, "is_admin", False))}
+
+class CreateUser(BaseModel):
+    username: str
+    password: str
+    is_admin: Optional[bool] = False
+
+@router.post("/users/create")
+def create_user(payload: CreateUser, db: Session = Depends(get_db), current = Depends(get_current_user)):
+    if not getattr(current, "is_admin", False):
+        raise HTTPException(status_code=403, detail="admin only")
+    exists = db.execute(select(User).where(User.username == payload.username)).scalar_one_or_none()
+    if exists:
+        raise HTTPException(status_code=409, detail="username exists")
+
+    # reuse password utilities from core.auth
+    from app.core.auth import get_password_hash
+    u = User(username=payload.username, password_hash=get_password_hash(payload.password), is_admin=bool(payload.is_admin))
+    db.add(u)
+    db.commit()
+    db.refresh(u)
+    return {"id": u.id, "username": u.username, "is_admin": bool(u.is_admin)}

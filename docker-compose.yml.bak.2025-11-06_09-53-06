@@ -1,0 +1,37 @@
+services:
+  postgres:
+  restart: unless-stopped
+    image: postgres:15
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: smsdb
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [stack]
+
+  api:
+  restart: unless-stopped
+    build:
+      context: .
+      dockerfile: api.Dockerfile
+    environment:
+      DB_URL: postgresql+psycopg://postgres:postgres@postgres:5432/smsdb
+    depends_on: [postgres]
+    ports: ["8010:8000"]
+    networks: [stack]
+
+  web:
+  restart: unless-stopped
+    build:
+      context: .
+      dockerfile: web.Dockerfile
+    depends_on: [api]
+    ports: ["5183:80"]
+    networks: [stack]
+
+volumes:
+  pgdata:
+
+networks:
+  stack:

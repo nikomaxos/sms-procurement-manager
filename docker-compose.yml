@@ -1,0 +1,22 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: api.Dockerfile
+    environment:
+      SECRET_KEY: dev-change-me
+      DATA_DIR: /app/data
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    ports:
+      - "8010:8000"
+
+  web:
+    image: nginx:alpine
+    depends_on: [api]
+    restart: unless-stopped
+    ports:
+      - "5183:80"
+    volumes:
+      - ./web/public:/usr/share/nginx/html:ro

@@ -1,0 +1,136 @@
+from fastapi import FastAPI, Depends, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import Dict, List, Any, Optional
+from sqlalchemy import text
+import json, os
+
+from app.core.database import engine
+origins = ["*"]
+
+app = FastAPI(title="SMS Procurement Manager", version="0.1.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ---- run migrations safely on startup (won't crash process) ----
+@app.on_event("startup")
+def _safe_boot():
+    try:
+        from app.migrations_domain import migrate_domain
+        migrate_domain()
+    except Exception as e:
+        # Log but do NOT raise to avoid crash loops
+        print("!! MIGRATION WARNING:", e)
+
+# health
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+# ---- Try to include project routers if they exist ----
+def _try_include(module_path: str, prefix: Optional[str] = None):
+    try:
+        mod = __import__(module_path, fromlist=['router'])
+        r = getattr(mod, 'router', None)
+        if r is not None:
+            app.include_router(r, prefix=prefix or "")
+            return True
+    except Exception as e:
+        print(f"!! Router include failed: {module_path} -> {e}")
+    return False
+
+have_conf = _try_include("app.routers.conf")
+have_offers = _try_include("app.routers.offers")
+have_offers_plus = _try_include("app.routers.offers_plus")
+have_networks = _try_include("app.routers.networks")
+have_countries = _try_include("app.routers.countries")
+have_suppliers = _try_include("app.routers.suppliers")
+have_connections = _try_include("app.routers.connections")
+have_parsers = _try_include("app.routers.parsers")
+have_metrics = _try_include("app.routers.metrics")
+_try_include("app.routers.users")
+_try_include("app.routers.settings")
+_try_include("app.routers.hot")
+_try_include("app.routers.lookups")
+_try_include("app.routers.create_api")
+
+# ---- Fallback minimal routers to prevent 404s if modules are missing ----
+# config/enums fallback
+if not have_conf:
+    class EnumsModel(BaseModel):
+        route_type: List[str] = ["Direct","SS7","SIM","Local Bypass"]
+        known_hops: List[str] = ["0-Hop","1-Hop","2-Hops","N-Hops"]
+        registration_required: List[str] = ["Yes","No"]
+        sender_id_supported: List[str] = ["Dynamic Alphanumeric", "Dynamic Numeric", "Short code"]
+
+    def _ensure_cfg():
+        ddl = """
+        CREATE TABLE IF NOT EXISTS config_kv(
+          key TEXT PRIMARY KEY,
+          value JSONB NOT NULL,
+          updated_at TIMESTAMPTZ DEFAULT now()
+        );
+        """
+        with engine.begin() as c:
+            c.execute(text(ddl))
+
+    @app.get("/conf/enums")
+    def get_enums() -> Dict[str, Any]:
+        _ensure_cfg()
+        row = None
+        with engine.begin() as c:
+            row = c.execute(text("SELECT value FROM config_kv WHERE key='enums'")).fetchone()
+        if row and row[0]:
+            try:
+                return dict(row[0])
+            except Exception:
+                try:
+                    return json.loads(row[0])
+                except Exception:
+                    pass
+        return EnumsModel().dict()
+
+    @app.put("/conf/enums")
+    def put_enums(payload: Dict[str, Any]):
+        _ensure_cfg()
+        j = json.dumps(payload)
+        with engine.begin() as c:
+            c.execute(text("INSERT INTO config_kv(key,value,updated_at) VALUES('enums', :v, now()) "
+                           "ON CONFLICT (key) DO UPDATE SET value=:v, updated_at=now()"),
+                      {"v": j})
+        return {"ok": True}
+
+# networks fallback
+if not have_networks:
+    @app.get("/networks/")
+    def networks_list():
+        with engine.begin() as c:
+            rs = c.execute(text("SELECT id, name, country_id, mnc, mccmnc FROM networks ORDER BY id DESC"))
+            return [dict(r._mapping) for r in rs]
+
+# offers fallback (list only)
+if not have_offers and not have_offers_plus:
+    @app.get("/offers/")
+    def offers_list(limit: int = 50, offset: int = 0):
+        q = text("SELECT * FROM offers ORDER BY updated_at DESC LIMIT :lim OFFSET :off")
+        with engine.begin() as c:
+            rows = c.execute(q, {"lim": limit, "off": offset})
+            return [dict(r._mapping) for r in rows]
+
+# parsers fallback
+if not have_parsers:
+    @app.get("/parsers/")
+    def parsers_list():
+        return []
+
+# metrics/trends fallback
+if not have_metrics:
+    @app.get("/metrics/trends")
+    def trends(d: Optional[str] = None):
+        # minimal empty structure the UI expects
+        return {"date": d, "by_route": {}, "top_networks": []}

@@ -1,0 +1,345 @@
+(() => {
+  const $ = (s)=>document.querySelector(s);
+  const root=$("#root"), nav=$("#nav");
+  const API = `http://${location.hostname}:8010`;
+
+  // token helpers
+  const token = ()=>localStorage.getItem("token")||"";
+  const setToken = (t)=>localStorage.setItem("token",t);
+  const clearToken = ()=>localStorage.removeItem("token");
+
+  // fetch wrappers
+  async function authFetch(path, opts={}) {
+    const headers = Object.assign(
+      {"Content-Type":"application/json","Authorization":"Bearer "+token()},
+      opts.headers||{}
+    );
+    const res = await fetch(API + path, {...opts, headers});
+    if (res.status === 401) throw new Error("Unauthorized");
+    if (!res.ok) {
+      const txt = await res.text().catch(()=>`HTTP ${res.status}`);
+      throw new Error(txt || `HTTP ${res.status}`);
+    }
+    // handle 204
+    if (res.status === 204) return null;
+    const ct = res.headers.get("content-type")||"";
+    return ct.includes("application/json") ? res.json() : res.text();
+  }
+
+  // seed if empty
+  async function ensureSeed() {
+    try {
+      const c = await authFetch("/countries/");
+      if (c && Array.isArray(c.items) && c.items.length === 0) {
+        await authFetch("/countries/", {method:"POST", body: JSON.stringify({code:"GR", name:"Greece"})});
+        await authFetch("/countries/", {method:"POST", body: JSON.stringify({code:"RO", name:"Romania"})});
+      }
+    } catch {}
+    try {
+      const n = await authFetch("/networks/");
+      if (n && Array.isArray(n.items) && n.items.length === 0) {
+        await authFetch("/networks/", {method:"POST", body: JSON.stringify({name:"COSMOTE", mccmnc:"20201", country_code:"GR"})});
+        await authFetch("/networks/", {method:"POST", body: JSON.stringify({name:"VODAFONE GR", mccmnc:"20205", country_code:"GR"})});
+      }
+    } catch {}
+    try {
+      const o = await authFetch("/offers/");
+      if (o && Array.isArray(o.items) && o.items.length === 0) {
+        await authFetch("/offers/", {method:"POST", body: JSON.stringify({
+          title:"Starter bundle",
+          country_code:"GR",
+          network_id:1,
+          currency:"EUR",
+          prices:[
+            {"supplier_user":"VendorA/u1","price":0.015,"valid_from":null,"valid_to":null},
+            {"supplier_user":"VendorB/u9","price":0.0175,"valid_from":null,"valid_to":null}
+          ],
+          tags:["otp","whitelist"]
+        })});
+      }
+    } catch {}
+  }
+
+  // UI helpers
+  const msg = (t,cls="notice") => `<div class="${cls}">${t}</div>`;
+  function row(...cells){ return `<tr>${cells.map(c=>`<td>${c}</td>`).join("")}</tr>`; }
+  function table(heads, rowsHtml){
+    return `<table class="table"><thead><tr>${heads.map(h=>`<th>${h}</th>`).join("")}</tr></thead><tbody>${rowsHtml||""}</tbody></table>`;
+  }
+
+  // views
+  async function viewDashboard(){
+    root.innerHTML = `<h2>Dashboard</h2>
+      ${msg("Welcome! Use the top menu to manage Offers, Countries, Networks, and Settings.")}
+      <div class="grid-3">
+        <div class="notice">API: ${API}</div>
+        <div class="notice">Auth: OK</div>
+        <div class="notice">Time: ${new Date().toLocaleString()}</div>
+      </div>`;
+  }
+
+  async function viewCountries(){
+    const data = await authFetch("/countries/");
+    const items = data.items || [];
+    let rows = items.map(x => row(x.id, x.code, x.name)).join("");
+    root.innerHTML = `
+      <h2>Countries</h2>
+      <div class="grid-3">
+        <div><label>Code (e.g. GR)</label><input id="c_code"></div>
+        <div><label>Name</label><input id="c_name"></div>
+        <div class="actions" style="align-self:end"><button class="primary" id="c_add">Add</button></div>
+      </div>
+      ${table(["ID","Code","Name"], rows || "")}
+      <div id="c_msg"></div>
+    `;
+    $("#c_add").onclick = async ()=>{
+      const code = $("#c_code").value.trim().toUpperCase();
+      const name = $("#c_name").value.trim();
+      if(!code || !name){ $("#c_msg").innerHTML = msg("Fill code & name","error"); return; }
+      try {
+        await authFetch("/countries/", {method:"POST", body: JSON.stringify({code,name})});
+        viewCountries();
+      } catch(e){ $("#c_msg").innerHTML = msg(e.message,"error"); }
+    };
+  }
+
+  async function viewNetworks(){
+    const data = await authFetch("/networks/");
+    const items = data.items || [];
+    let rows = items.map(x => row(x.id, x.country_code, x.name, x.mccmnc)).join("");
+    // load countries for select
+    const countries = (await authFetch("/countries/")).items || [];
+    const opt = countries.map(c=>`<option value="${c.code}">${c.code} — ${c.name}</option>`).join("");
+    root.innerHTML = `
+      <h2>Networks</h2>
+      <div class="grid-4">
+        <div><label>Country</label><select id="n_cc">${opt}</select></div>
+        <div><label>Name</label><input id="n_name"></div>
+        <div><label>MCCMNC</label><input id="n_mccmnc" placeholder="20201"></div>
+        <div class="actions" style="align-self:end"><button class="primary" id="n_add">Add</button></div>
+      </div>
+      ${table(["ID","Country","Name","MCCMNC"], rows || "")}
+      <div id="n_msg"></div>
+    `;
+    $("#n_add").onclick = async ()=>{
+      const country_code = $("#n_cc").value;
+      const name = $("#n_name").value.trim();
+      const mccmnc = $("#n_mccmnc").value.trim();
+      if(!country_code || !name || !mccmnc){ $("#n_msg").innerHTML = msg("Fill all fields","error"); return; }
+      try {
+        await authFetch("/networks/", {method:"POST", body: JSON.stringify({country_code,name,mccmnc})});
+        viewNetworks();
+      } catch(e){ $("#n_msg").innerHTML = msg(e.message,"error"); }
+    };
+  }
+
+  async function viewOffers(){
+    const data = await authFetch("/offers/");
+    const items = data.items || [];
+    let rows = items.map(x => row(
+      x.id, x.title, x.country_code, x.network_id, x.currency,
+      (x.prices||[]).map(p=>`${p.supplier_user}: ${p.price}`).join("<br>"),
+      (x.tags||[]).join(", ")
+    )).join("");
+
+    const countries = (await authFetch("/countries/")).items || [];
+    const networks = (await authFetch("/networks/")).items || [];
+    const ccOpt = countries.map(c=>`<option value="${c.code}">${c.code}</option>`).join("");
+    const nwOpt = networks.map(n=>`<option value="${n.id}">${n.id} — ${n.name}</option>`).join("");
+
+    root.innerHTML = `
+      <h2>Offers</h2>
+      <div class="grid-4">
+        <div><label>Title</label><input id="o_title"></div>
+        <div><label>Country</label><select id="o_cc">${ccOpt}</select></div>
+        <div><label>Network</label><select id="o_net">${nwOpt}</select></div>
+        <div><label>Currency</label><input id="o_cur" value="EUR"></div>
+      </div>
+      <div class="grid-3">
+        <div><label>Supplier / Username</label><input id="o_sup"></div>
+        <div><label>Price</label><input id="o_price" type="number" step="0.0001"></div>
+        <div class="actions" style="align-self:end"><button id="o_addPrice">Add Price Row</button></div>
+      </div>
+      <div id="o_prices" class="notice muted">No price rows yet.</div>
+      <label>Tags (comma separated)</label><input id="o_tags" placeholder="otp, whitelist">
+      <div class="actions"><button class="primary" id="o_save">Save Offer</button></div>
+      ${table(["ID","Title","CC","Network","Curr","Prices","Tags"], rows || "")}
+      <div id="o_msg"></div>
+    `;
+
+    const priceRows = [];
+    function redrawPrices(){
+      if(priceRows.length===0){ $("#o_prices").innerHTML = '<span class="muted">No price rows yet.</span>'; return; }
+      $("#o_prices").innerHTML = table(["Supplier/User","Price"], priceRows.map(p => row(p.supplier_user, p.price)).join(""));
+    }
+    $("#o_addPrice").onclick = ()=>{
+      const supplier_user = $("#o_sup").value.trim();
+      const price = Number($("#o_price").value);
+      if(!supplier_user || !price){ $("#o_msg").innerHTML=msg("Fill supplier & price","error"); return; }
+      priceRows.push({supplier_user, price});
+      $("#o_sup").value=""; $("#o_price").value="";
+      redrawPrices();
+    };
+    redrawPrices();
+
+    $("#o_save").onclick = async ()=>{
+      const title = $("#o_title").value.trim();
+      const country_code = $("#o_cc").value;
+      const network_id = Number($("#o_net").value);
+      const currency = $("#o_cur").value.trim() || "EUR";
+      const tags = $("#o_tags").value.split(",").map(s=>s.trim()).filter(Boolean);
+      if(!title || !country_code || !network_id){ $("#o_msg").innerHTML = msg("Fill title/country/network","error"); return; }
+      try {
+        await authFetch("/offers/", {
+          method:"POST",
+          body: JSON.stringify({title,country_code,network_id,currency,prices:priceRows,tags})
+        });
+        viewOffers();
+      } catch(e){ $("#o_msg").innerHTML = msg(e.message,"error"); }
+    };
+  }
+
+  async function viewSettings(){
+    // IMAP tab only (no enums dump here)
+    const im = await authFetch("/settings/imap");
+    root.innerHTML = `
+      <h2>Settings</h2>
+      <h3>Email (IMAP)</h3>
+      <div class="grid-4">
+        <div><label>Host</label><input id="im_host" value="${im.host||""}"></div>
+        <div><label>Port</label><input id="im_port" type="number" value="${im.port??993}"></div>
+        <div><label>Username</label><input id="im_user" value="${im.username||""}"></div>
+        <div><label>Password</label><input id="im_pass" type="password" value="${im.password||""}"></div>
+      </div>
+      <div class="grid-3">
+        <div><label>SSL</label><input id="im_ssl" type="checkbox" ${im.ssl?"checked":""}></div>
+        <div><label>Default Folder</label><input id="im_folder" value="${im.folder||"INBOX"}"></div>
+        <div><label>Enabled</label><input id="im_enabled" type="checkbox" ${im.enabled?"checked":""}></div>
+      </div>
+      <div class="actions">
+        <button id="im_save" class="primary">Save IMAP</button>
+        <button id="im_test">Test connection</button>
+        <button id="im_fetch">Fetch folders</button>
+      </div>
+      <div id="im_msg"></div>
+      <div id="im_folders" class="hidden">
+        <h3>IMAP Folders</h3>
+        <div class="grid-2">
+          <div>
+            <label>Available</label>
+            <select id="im_folders_list" multiple></select>
+          </div>
+          <div>
+            <label>Selected</label>
+            <div id="im_selected" class="notice"></div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    $("#im_save").onclick = async ()=>{
+      try{
+        await authFetch("/settings/imap",{method:"POST", body: JSON.stringify({
+          host: $("#im_host").value,
+          port: Number($("#im_port").value),
+          username: $("#im_user").value,
+          password: $("#im_pass").value,
+          ssl: $("#im_ssl").checked,
+          folder: $("#im_folder").value,
+          enabled: $("#im_enabled").checked
+        })});
+        $("#im_msg").innerHTML = 'Saved.';
+      }catch(e){ $("#im_msg").innerHTML = '<span class="badge">'+e.message+'</span>'; }
+    };
+
+    $("#im_test").onclick = async ()=>{
+      $("#im_msg").innerHTML = 'Testing…';
+      try{
+        const r = await authFetch("/settings/imap/test",{method:"POST", body: JSON.stringify({
+          host: $("#im_host").value, port: Number($("#im_port").value),
+          username: $("#im_user").value, password: $("#im_pass").value,
+          ssl: $("#im_ssl").checked
+        })});
+        $("#im_msg").innerHTML = `OK — ${r.greeting||"connected"}`;
+      }catch(e){ $("#im_msg").innerHTML = '<span class="badge">'+e.message+'</span>'; }
+    };
+
+    $("#im_fetch").onclick = async ()=>{
+      $("#im_msg").innerHTML = 'Fetching folders…';
+      try{
+        const r = await authFetch("/settings/imap/folders",{method:"POST", body: JSON.stringify({
+          host: $("#im_host").value, port: Number($("#im_port").value),
+          username: $("#im_user").value, password: $("#im_pass").value,
+          ssl: $("#im_ssl").checked
+        })});
+        const list = $("#im_folders_list");
+        list.innerHTML = "";
+        (r.folders||[]).forEach(f=>{
+          const opt=document.createElement("option");
+          opt.value=opt.textContent=f; list.appendChild(opt);
+        });
+        $("#im_folders").classList.remove("hidden");
+        list.onchange = ()=>{
+          const sel=[...list.selectedOptions].map(o=>o.value);
+          $("#im_selected").textContent = sel.join(", ")||"(none)";
+        };
+        $("#im_msg").innerHTML = `Found ${r.folders?.length||0} folder(s). Select with Ctrl/Cmd + Click.`;
+      }catch(e){ $("#im_msg").innerHTML = '<span class="badge">'+e.message+'</span>'; }
+    };
+  }
+
+  // router
+  async function render(view){
+    try{
+      await authFetch("/users/me");
+      nav.hidden = false;
+      if (view==="countries") return viewCountries();
+      if (view==="networks")  return viewNetworks();
+      if (view==="offers")    return viewOffers();
+      if (view==="settings")  return viewSettings();
+      return viewDashboard();
+    } catch {
+      showLogin();
+    }
+  }
+
+  function showLogin(){
+    nav.hidden = true;
+    root.innerHTML = `
+      <h2>Login</h2>
+      <div class="grid-2">
+        <div><label>Username</label><input id="u" value="admin"></div>
+        <div><label>Password</label><input id="p" type="password" value="admin123"></div>
+      </div>
+      <div class="actions"><button class="primary" id="loginBtn">Login</button></div>
+      <div id="msg" class="muted"></div>
+    `;
+    $("#loginBtn").onclick = async ()=>{
+      $("#msg").textContent = "";
+      try {
+        const r = await fetch(API + "/users/login", {
+          method:"POST", headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({username: $("#u").value.trim(), password: $("#p").value})
+        });
+        if (!r.ok) throw new Error(`Login failed (${r.status})`);
+        const j = await r.json();
+        if (!j.access_token) throw new Error("No token");
+        setToken(j.access_token);
+        // seed after first successful login (idempotent)
+        await ensureSeed();
+        render("dashboard");
+      } catch(e){ $("#msg").textContent = e.message; }
+    };
+  }
+
+  // nav handlers
+  nav.addEventListener("click", (e)=>{
+    const v = e.target.getAttribute("data-view");
+    if (!v) return;
+    render(v);
+  });
+  $("#logout").onclick = ()=>{ clearToken(); showLogin(); };
+
+  // boot
+  render("dashboard");
+})();

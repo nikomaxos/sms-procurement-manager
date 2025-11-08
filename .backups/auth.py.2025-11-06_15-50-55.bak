@@ -1,0 +1,47 @@
+import os, time
+from typing import Optional
+from fastapi import Depends, HTTPException, status, APIRouter
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from jose import jwt, JWTError
+from passlib.hash import bcrypt
+from sqlalchemy import text
+from app.core.database import engine, SessionLocal
+
+SECRET = os.getenv("JWT_SECRET", "devsecret-change-me")
+ALGO = "HS256"
+EXPIRE = 60*60*8
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/users/login")
+
+def seed_admin():
+    with engine.begin() as c:
+        c.execute(text("""
+        CREATE TABLE IF NOT EXISTS users(
+          id SERIAL PRIMARY KEY,
+          username VARCHAR NOT NULL UNIQUE,
+          password_hash VARCHAR NOT NULL,
+          role VARCHAR DEFAULT 'user'
+        );
+        """))
+        r = c.execute(text("SELECT 1 FROM users WHERE username='admin';")).fetchone()
+        if not r:
+            c.execute(text("INSERT INTO users (username,password_hash,role) VALUES (:u,:p,'admin')"),
+                dict(u='admin', p=bcrypt.hash('admin123')))
+
+def authenticate(u: str, p: str) -> Optional[dict]:
+    with engine.begin() as c:
+        row = c.execute(text("SELECT id, username, password_hash, role FROM users WHERE username=:u"), dict(u=u)).fetchone()
+        if row and bcrypt.verify(p, row.password_hash):
+            return dict(id=row.id, username=row.username, role=row.role)
+    return None
+
+def create_token(user: dict) -> str:
+    payload = {"sub": user["username"], "uid": user["id"], "role": user["role"], "exp": int(time.time()) + EXPIRE}
+    return jwt.encode(payload, SECRET, algorithm=ALGO)
+
+def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
+    try:
+        payload = jwt.decode(token, SECRET, algorithms=[ALGO])
+        return {"id": payload["uid"], "username": payload["sub"], "role": payload.get("role","user")}
+    except JWTError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")

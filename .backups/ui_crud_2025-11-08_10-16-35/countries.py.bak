@@ -1,0 +1,74 @@
+from fastapi import APIRouter, HTTPException, Header
+from typing import Optional, Dict, Any, List
+from pathlib import Path
+import json
+
+from app.core.auth import verify_token
+
+router = APIRouter(prefix="/countries", tags=["countries"])
+FILE = Path("/app/data/countries.json")
+
+def _auth(a: Optional[str]): 
+    if not a or not a.startswith("Bearer "): 
+        raise HTTPException(401, "Unauthorized")
+    verify_token(a.split(" ",1)[1])
+
+def _load() -> List[Dict[str, Any]]:
+    if FILE.exists():
+        try:
+            return json.loads(FILE.read_text("utf-8"))
+        except Exception:
+            pass
+    seed = [
+        {"id":1,"code":"GR","name":"Greece"},
+        {"id":2,"code":"RO","name":"Romania"},
+        {"id":3,"code":"BG","name":"Bulgaria"},
+        {"id":4,"code":"ES","name":"Spain"},
+    ]
+    FILE.parent.mkdir(parents=True, exist_ok=True)
+    FILE.write_text(json.dumps(seed, indent=2), "utf-8")
+    return seed
+
+def _save(items: List[Dict[str, Any]]):
+    FILE.write_text(json.dumps(items, indent=2, ensure_ascii=False), "utf-8")
+
+@router.get("/")
+def list_countries(authorization: Optional[str] = Header(None), q: Optional[str] = None):
+    _auth(authorization)
+    items = _load()
+    if q:
+        ql = q.lower()
+        items = [x for x in items if ql in x["code"].lower() or ql in x["name"].lower()]
+    return {"items": items}
+
+@router.post("/")
+def create_country(body: Dict[str, Any], authorization: Optional[str] = Header(None)):
+    _auth(authorization)
+    items = _load()
+    nid = (max([x["id"] for x in items]) + 1) if items else 1
+    code = str(body.get("code","")).upper().strip()
+    name = str(body.get("name","")).strip()
+    if not code or not name: raise HTTPException(400, "code and name required")
+    if any(x["code"] == code for x in items): raise HTTPException(400, "code exists")
+    rec = {"id": nid, "code": code, "name": name}
+    items.append(rec); _save(items)
+    return {"ok": True, "item": rec}
+
+@router.put("/{item_id}")
+def update_country(item_id: int, body: Dict[str, Any], authorization: Optional[str] = Header(None)):
+    _auth(authorization)
+    items = _load()
+    for x in items:
+        if x["id"] == item_id:
+            if "code" in body: x["code"] = str(body["code"]).upper().strip()
+            if "name" in body: x["name"] = str(body["name"]).strip()
+            _save(items); return {"ok": True, "item": x}
+    raise HTTPException(404, "not found")
+
+@router.delete("/{item_id}")
+def delete_country(item_id: int, authorization: Optional[str] = Header(None)):
+    _auth(authorization)
+    items = _load()
+    n = [x for x in items if x["id"] != item_id]
+    if len(n) == len(items): raise HTTPException(404, "not found")
+    _save(n); return {"ok": True}

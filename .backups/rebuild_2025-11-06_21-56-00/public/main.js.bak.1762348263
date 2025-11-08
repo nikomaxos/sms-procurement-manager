@@ -1,0 +1,545 @@
+function go(fn) {
+  try { fn(); }
+  catch(e) { console.error(e); alert('Unexpected error: ' + e.message); }
+}
+
+function __ensureSettingsCSS() {
+(async () => {
+  try { fn(); }
+  catch(e) { console.error(e); alert('Unexpected error: ' + e.message); }
+}
+
+const $ = s=>document.querySelector(s);
+const tokenKey='SPM_TOKEN', apiKey='API_BASE';
+let API_BASE = localStorage.getItem(apiKey) || 'http://localhost:8010';
+let TOKEN = localStorage.getItem(tokenKey) || '';
+
+function navActivate(v){ document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('active', b.dataset.view===v)); }
+function setAPIInfo(){ $('#apiBaseInfo').textContent = API_BASE; }
+function setUser(u){ $('#userName').textContent = u || '-'; $('#logoutBtn').style.display = u ? '' : 'none'; }
+
+async function authFetch(path, opts={}){
+  const url = API_BASE.replace(/\/$/,'') + path;
+  const headers = opts.headers || {};
+  if (TOKEN) headers['Authorization'] = 'Bearer '+TOKEN;
+  if (opts.body && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
+  opts.headers = headers;
+  const r = await fetch(url, opts);
+  if (!r.ok) {
+    const t = await r.text().catch(()=>String(r.status));
+    throw new Error(`${r.status} ${t}`);
+  }
+  const ct = r.headers.get('content-type')||'';
+  return ct.includes('application/json') ? r.json() : r.text();
+}
+async function verifyToken(){ if(!TOKEN) return false; try{ await authFetch('/users/me'); return true; }catch{ localStorage.removeItem(tokenKey); TOKEN=''; return false; } }
+function onEnter(selector, fn){ document.querySelectorAll(selector).forEach(el=>el.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); fn(); } })); }
+
+function openLogin(){ $('#loginModal').style.display='flex'; }
+function closeLogin(){ $('#loginModal').style.display='none'; }
+$('#loginBtn').onclick = async ()=>{
+  try{
+    const form = new URLSearchParams(); form.append('username',$('#user').value); form.append('password',$('#pass').value);
+    const r = await fetch(API_BASE.replace(/\/$/,'') + '/users/login',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:form});
+    if(!r.ok){ $('#loginMsg').textContent='Login failed'; return; }
+    const j = await r.json(); TOKEN=j.access_token; localStorage.setItem(tokenKey,TOKEN); setUser($('#user').value||'admin'); closeLogin(); render('trends');
+  }catch(e){ $('#loginMsg').textContent=e.message; }
+};
+$('#logoutBtn').onclick = ()=>{ localStorage.removeItem(tokenKey); TOKEN=''; setUser(''); openLogin(); };
+
+$('#apiBtn').onclick = ()=>{ $('#apiInput').value = API_BASE; $('#apiModal').style.display='flex'; };
+$('#apiClose').onclick = ()=> $('#apiModal').style.display='none';
+$('#apiSave').onclick = ()=>{ API_BASE = $('#apiInput').value.trim() || API_BASE; localStorage.setItem(apiKey, API_BASE); setAPIInfo(); $('#apiModal').style.display='none'; };
+
+async function viewTrends(){
+  navActivate('trends');
+  $('#filters').innerHTML = `<div class="card row"><label>Date</label><input id="tDate" type="date"/><button id="tGo" class="btn btn-blue">Search</button></div>`;
+  $('#view').innerHTML = `<div class="card"><div>Loading…</div></div>`;
+  const today = new Date().toISOString().slice(0,10); $('#tDate').value = $('#tDate').value || today;
+  const go = async ()=>{
+    const d=$('#tDate').value || today;
+    const data = await authFetch(`/metrics/trends?d=${encodeURIComponent(d)}`);
+    const keys=Object.keys(data.by_route_type||{});
+    let html = '';
+    for(const rt of [...keys.filter(k=>k!=='Unknown'), ...keys.filter(k=>'Unknown'===k)]){
+      const arr=data.by_route_type[rt]||[]; const max=Math.max(1,...arr.map(x=>x.count));
+      html += `<div class="card"><h3>${rt}</h3><div class="barwrap">${
+        arr.map(x=>`<div class="bar" title="${x.network_name} = ${x.count}" style="height:${Math.round((x.count/max)*180)+20}px"><span>${x.count}</span></div>`).join('')
+      }</div><div class="legend">${
+        arr.map(x=>`<legend-badge>${x.network_name}</legend-badge>`).join('')
+      }</div></div>`;
+    }
+    $('#view').innerHTML = html || '<div class="card">No data.</div>';
+  };
+  $('#tGo').onclick = go; onEnter('#filters input', go); await __ensureSettingsCSS(); (async ();
+}
+
+let OffersPager={limit:50,offset:0,total:0}, pageData=[], selectedIds=new Set();
+function setLookups(selector, path){
+  const input = document.querySelector(selector); const dl = document.querySelector(input.getAttribute('list'));
+  input.addEventListener('input', async ()=>{ const q=input.value; try{ const arr = await authFetch(path+'?q='+encodeURIComponent(q)); dl.innerHTML = arr.map(v=>`<option value="${v}">`).join(''); }catch{} });
+}
+function filtersQS(){
+  const p=new URLSearchParams();
+  const map = { '#of_sup':'supplier_name','#of_con':'connection_name','#of_country':'country','#of_net':'network_name','#of_mm':'mccmnc','#of_route':'route_type','#of_hops':'known_hops','#of_sid':'sender_id_supported','#of_reg':'registration_required' };
+  for(const sel in map){ const v=(document.querySelector(sel).value||'').trim(); if(v) p.set(map[sel], v); }
+  const ex=$('#of_ex').value.trim(); if(ex) p.set('is_exclusive', ex);
+  p.set('limit', OffersPager.limit); p.set('offset', OffersPager.offset);
+  return p.toString();
+}
+async function loadOffers(reset=false){
+  if(reset){ OffersPager.offset=0; selectedIds.clear(); }
+  const qs = filtersQS();
+  const r = await fetch(API_BASE.replace(/\/$/,'') + '/offers/?' + qs, {headers:{'Authorization':'Bearer '+TOKEN}});
+  const total = parseInt(r.headers.get('X-Total-Count')||'0',10); const rows = await r.json(); OffersPager.total=total; pageData=rows;
+  $('#pageInfo').textContent = `Total ${total} • showing ${rows.length} (offset ${OffersPager.offset})`;
+  $('#view').innerHTML = `<div class="card">
+    <table>
+      <thead><tr>
+        <th><input type="checkbox" id="selHead"></th>
+        <th>Supplier</th><th>Connection</th><th>Country</th><th>Network</th><th>MCCMNC</th>
+        <th>Price</th><th>Eff.</th><th>Prev</th><th>Route</th><th>Hops</th><th>Sender</th>
+        <th>Reg</th><th>ETA</th><th>Charge</th><th>Exclusive</th><th>Notes</th><th></th>
+      </tr></thead>
+      <tbody>${
+        rows.map(o=>`<tr>
+          <td><input type="checkbox" class="rowchk" data-id="${o.id}" ${selectedIds.has(o.id)?'checked':''}></td>
+          <td>${o.supplier_name}</td><td>${o.connection_name}</td><td>${o.country_name||''}</td><td>${o.network_name||''}</td><td>${o.mccmnc||''}</td>
+          <td>${o.price}</td><td>${o.price_effective_date||''}</td><td>${o.previous_price??''}</td>
+          <td>${o.route_type||''}</td><td>${o.known_hops||''}</td><td>${o.sender_id_supported||''}</td>
+          <td>${o.registration_required||''}</td><td>${o.eta_days??''}</td><td>${o.charge_model||''}</td>
+          <td>${o.is_exclusive?'Yes':'No'}</td><td>${o.notes||''}</td>
+          <td class="actions"><button class="btn btn-yellow" data-act="edit" data-id="${o.id}">Edit</button>
+                              <button class="btn btn-red" data-act="del" data-id="${o.id}">Delete</button></td>
+        </tr>`).join('')
+      }</tbody></table></div>`;
+  $('#selHead').onclick = (e)=>{ document.querySelectorAll('.rowchk').forEach(c=>{ c.checked=e.target.checked; c.dispatchEvent(new Event('change')); }); };
+  document.querySelectorAll('.rowchk').forEach(c=> c.onchange = ()=>{ const id=parseInt(c.dataset.id,10); if(c.checked) selectedIds.add(id); else selectedIds.delete(id); });
+  document.querySelectorAll('button[data-act="del"]').forEach(b=> b.onclick = async ()=>{ if(!confirm('Delete?')) return; await authFetch('/offers/'+b.dataset.id,{method:'DELETE'}); loadOffers(); });
+  document.querySelectorAll('button[data-act="edit"]').forEach(b=> b.onclick = ()=> openOfferEditor(b.dataset.id));
+}
+async function selectAllOnPage(state){ document.querySelectorAll('.rowchk').forEach(c=>{ c.checked=state; c.dispatchEvent(new Event('change')); }); }
+async function selectAllAcross(){ const qs=filtersQS().replace(/limit=\d+/,'limit=1000').replace(/offset=\d+/,'offset=0'); const all=await authFetch('/offers/?'+qs); selectedIds=new Set(all.map(x=>x.id)); loadOffers(); }
+async function bulkUpdateSelected(){
+  if(selectedIds.size===0){ alert('No rows selected'); return; }
+  const field = prompt('Field to set (route_type, known_hops, registration_required, sender_id_supported, eta_days, charge_model, is_exclusive, notes):');
+  if(!field) return; let val = prompt('Value (true/false for is_exclusive; integer for eta_days; text for others):','');
+  if(field==='is_exclusive'){ val=(val==='true'); } else if(field==='eta_days'){ val=val?parseInt(val,10):null; }
+  await authFetch('/offers/bulk',{method:'POST', body:JSON.stringify({ids:Array.from(selectedIds), set:{[field]:val}})}); await loadOffers();
+}
+async function openOfferEditor(id){
+  const o = pageData.find(x=> String(x.id)===String(id)); if(!o){ alert('Row not found'); return; }
+  const html = `<div class="card"><h3>Edit Offer #${o.id}</h3>
+    <div class="row">
+      <div><label>Supplier</label><input id="e_sup" value="${o.supplier_name||''}" list="dl_sup"/></div>
+      <div><label>Connection</label><input id="e_con" value="${o.connection_name||''}" list="dl_con"/></div>
+      <div><label>Country</label><input id="e_country" value="${o.country_name||''}" list="dl_cty"/></div>
+      <div><label>Network</label><input id="e_net" value="${o.network_name||''}" list="dl_net"/></div>
+      <div><label>MCCMNC</label><input id="e_mm" value="${o.mccmnc||''}"/></div>
+      <div><label>Price</label><input id="e_price" type="number" step="0.0001" value="${o.price}"/></div>
+      <div><label>Effective date</label><input id="e_eff" type="date" value="${o.price_effective_date||''}"/></div>
+      <div><label>Prev price</label><input id="e_prev" type="number" step="0.0001" value="${o.previous_price??''}"/></div>
+      <div><label>Route</label><input id="e_route" value="${o.route_type||''}"/></div>
+      <div><label>Hops</label><input id="e_hops" value="${o.known_hops||''}"/></div>
+      <div><label>Sender ID</label><input id="e_sid" value="${o.sender_id_supported||''}"/></div>
+      <div><label>Registration</label><input id="e_reg" value="${o.registration_required||''}"/></div>
+      <div><label>ETA days</label><input id="e_eta" type="number" value="${o.eta_days??''}"/></div>
+      <div><label>Charge model</label><input id="e_charge" value="${o.charge_model||''}"/></div>
+      <div><label>Exclusive</label><select id="e_ex"><option value=""></option><option ${o.is_exclusive?'selected':''} value="true">Yes</option><option ${!o.is_exclusive?'selected':''} value="false">No</option></select></div>
+      <div><label>Notes</label><input id="e_notes" value="${o.notes||''}"/></div>
+    </div>
+    <div class="row right"><button id="e_save" class="btn btn-yellow">Save</button> <button id="e_cancel" class="btn">Cancel</button></div>
+  </div>
+  <datalist id="dl_sup"></datalist><datalist id="dl_con"></datalist><datalist id="dl_cty"></datalist><datalist id="dl_net"></datalist>`;
+  $('#view').insertAdjacentHTML('afterbegin', html);
+  setLookups('#e_sup','/lookup/suppliers'); setLookups('#e_con','/lookup/connections'); setLookups('#e_country','/lookup/countries'); setLookups('#e_net','/lookup/networks');
+  $('#e_cancel').onclick = ()=> loadOffers();
+  $('#e_save').onclick = async ()=>{
+    const body = {
+      supplier_name: $('#e_sup').value.trim(), connection_name: $('#e_con').value.trim(),
+      country_name: $('#e_country').value.trim()||null, network_name: $('#e_net').value.trim()||null,
+      mccmnc: $('#e_mm').value.trim()||null, price: parseFloat($('#e_price').value),
+      price_effective_date: $('#e_eff').value||null, previous_price: ($('#e_prev').value?parseFloat($('#e_prev').value):null),
+      route_type: $('#e_route').value||null, known_hops: $('#e_hops').value||null,
+      sender_id_supported: $('#e_sid').value||null, registration_required: $('#e_reg').value||null,
+      eta_days: ($('#e_eta').value?parseInt($('#e_eta').value,10):null), charge_model: $('#e_charge').value||null,
+      is_exclusive: ($('#e_ex').value===''?null:($('#e_ex').value==='true')), notes: $('#e_notes').value||null,
+      updated_by: $('#userName').textContent||'admin'
+    };
+    await authFetch('/offers/'+o.id,{method:'PUT', body:JSON.stringify(body)}); await loadOffers();
+  };
+}
+
+async function viewOffers(){
+  navActivate('offers');
+  $('#filters').innerHTML = `
+  <div class="card">
+    <div class="row">
+      <div><label>Supplier</label><input id="of_sup" list="dl_sup"/></div>
+      <div><label>Connection</label><input id="of_con" list="dl_con"/></div>
+      <div><label>Country</label><input id="of_country" list="dl_cty"/></div>
+      <div><label>Network</label><input id="of_net" list="dl_net"/></div>
+      <div><label>MCCMNC</label><input id="of_mm"/></div>
+      <div><label>Route</label><input id="of_route"/></div>
+      <div><label>Hops</label><input id="of_hops"/></div>
+      <div><label>Sender ID</label><input id="of_sid"/></div>
+      <div><label>Registration</label><input id="of_reg"/></div>
+      <div><label>Exclusive</label><select id="of_ex"><option value=""></option><option>true</option><option>false</option></select></div>
+    </div>
+    <div class="row">
+      <button id="ofSearch" class="btn btn-blue">Search</button>
+      <select id="pageSize"><option>10</option><option selected>50</option><option>100</option><option>1000</option></select>
+      <div class="pager"><button id="prevPage" class="btn">Prev</button><span id="pageInfo" class="muted"></span><button id="nextPage" class="btn">Next</button></div>
+      <button id="bulkBtn" class="btn btn-yellow">Bulk update selected</button>
+      <button id="selAllPage" class="btn">Select page</button>
+      <button id="selAllAll" class="btn">Select ALL</button>
+    </div>
+  </div>
+  <datalist id="dl_sup"></datalist><datalist id="dl_con"></datalist><datalist id="dl_cty"></datalist><datalist id="dl_net"></datalist>
+  <div class="card">
+    <h3>Create new offer</h3>
+    <div class="row">
+      <div><label>Supplier</label><input id="nf_sup" list="dl_sup"/></div>
+      <div><label>Connection</label><input id="nf_con" list="dl_con"/></div>
+      <div><label>Country</label><input id="nf_country" list="dl_cty"/></div>
+      <div><label>Network</label><input id="nf_net" list="dl_net"/></div>
+      <div><label>MCCMNC</label><input id="nf_mm"/></div>
+      <div><label>Price</label><input id="nf_price" type="number" step="0.0001"/></div>
+      <div><label>Effective date</label><input id="nf_eff" type="date"/></div>
+      <div><label>Prev price</label><input id="nf_prev" type="number" step="0.0001"/></div>
+      <div><label>Route</label><input id="nf_route"/></div>
+      <div><label>Hops</label><input id="nf_hops"/></div>
+      <div><label>Sender ID</label><input id="nf_sid"/></div>
+      <div><label>Registration</label><input id="nf_reg"/></div>
+      <div><label>ETA days</label><input id="nf_eta" type="number"/></div>
+      <div><label>Charge model</label><input id="nf_charge"/></div>
+      <div><label>Exclusive</label><select id="nf_ex"><option value=""></option><option value="true">Yes</option><option value="false">No</option></select></div>
+      <div><label>Notes</label><input id="nf_notes"/></div>
+    </div>
+    <div class="row right"><button id="nf_create" class="btn btn-green">Create</button></div>
+  </div>`;
+  setLookups('#of_sup','/lookup/suppliers'); setLookups('#of_con','/lookup/connections'); setLookups('#of_country','/lookup/countries'); setLookups('#of_net','/lookup/networks');
+  onEnter('#filters input', ()=> loadOffers(true)); $('#ofSearch').onclick = ()=> loadOffers(true);
+  $('#pageSize').onchange = ()=>{ OffersPager.limit=parseInt($('#pageSize').value,10); OffersPager.offset=0; loadOffers(); };
+  $('#prevPage').onclick = ()=>{ OffersPager.offset=Math.max(0,OffersPager.offset-OffersPager.limit); loadOffers(); };
+  $('#nextPage').onclick = ()=>{ if(OffersPager.offset+OffersPager.limit<OffersPager.total){ OffersPager.offset+=OffersPager.limit; loadOffers(); } };
+  $('#selAllPage').onclick = ()=> selectAllOnPage(true); $('#selAllAll').onclick = ()=> selectAllAcross();
+  $('#bulkBtn').onclick = bulkUpdateSelected;
+  $('#nf_create').onclick = async ()=>{
+    const body = {
+      supplier_name: $('#nf_sup').value.trim(), connection_name: $('#nf_con').value.trim(),
+      country_name: $('#nf_country').value.trim()||null, network_name: $('#nf_net').value.trim()||null, mccmnc: $('#nf_mm').value.trim()||null,
+      price: parseFloat($('#nf_price').value), price_effective_date: $('#nf_eff').value||null, previous_price: ($('#nf_prev').value?parseFloat($('#nf_prev').value):null),
+      route_type: $('#nf_route').value||null, known_hops: $('#nf_hops').value||null, sender_id_supported: $('#nf_sid').value||null, registration_required: $('#nf_reg').value||null,
+      eta_days: ($('#nf_eta').value?parseInt($('#nf_eta').value,10):null), charge_model: $('#nf_charge').value||null, is_exclusive: ($('#nf_ex').value===''?null:($('#nf_ex').value==='true')),
+      notes: $('#nf_notes').value||null, updated_by: $('#userName').textContent||'admin'
+    };
+    if(!body.supplier_name || !body.connection_name || isNaN(body.price)){ alert('Supplier, Connection, Price required'); return; }
+    await authFetch('/offers/', {method:'POST', body: JSON.stringify(body)}); await loadOffers(true);
+  };
+  OffersPager.limit=parseInt($('#pageSize').value,10); OffersPager.offset=0; await loadOffers(true);
+}
+
+async function viewSuppliers(){
+  navActivate('suppliers');
+  $('#filters').innerHTML = `<div class="card row"><input id="sq" placeholder="Search supplier…"/><button id="sf" class="btn btn-blue">Search</button><input id="snew" placeholder="New supplier name"/><button id="screate" class="btn btn-green">Create</button></div>`;
+  $('#sf').onclick=renderSuppliers; onEnter('#filters input', renderSuppliers);
+  $('#screate').onclick = async ()=>{ const n=$('#snew').value.trim(); if(!n) return; await authFetch('/suppliers/',{method:'POST',body:JSON.stringify({organization_name:n})}); $('#snew').value=''; renderSuppliers(); };
+  await renderSuppliers();
+}
+async function renderSuppliers(){
+  const q=$('#sq').value.trim();
+  const list = await authFetch('/suppliers/'+(q?`?q=${encodeURIComponent(q)}`:''));
+  $('#view').innerHTML = `<div class="card">${
+    list.map(s=>`<details>
+      <summary><b>${s.organization_name}</b>
+        <span class="actions"><button class="btn btn-yellow" data-act="rn" data-id="${s.id}" data-name="${s.organization_name}">Rename</button>
+        <button class="btn btn-red" data-act="del" data-name="${s.organization_name}">Delete</button></span>
+      </summary>
+      <div class="details-row" id="cbox-${s.id}">
+        <div class="row">
+          <input id="cname-${s.id}" placeholder="Connection name"/>
+          <input id="cuser-${s.id}" placeholder="Kannel username"/>
+          <input id="csmsc-${s.id}" placeholder="Kannel SMSc"/>
+          <select id="ccm-${s.id}"><option>Per Submitted</option><option>Per Delivered</option></select>
+          <button class="btn btn-green" id="cadd-${s.id}">Add</button>
+        </div>
+        <div id="ctable-${s.id}"></div>
+      </div>
+    </details>`).join('')
+  }</div>`;
+  $('#view').querySelectorAll('button[data-act="del"]').forEach(b=> b.onclick = async ()=>{ if(!confirm('Delete supplier?')) return; await authFetch('/suppliers/'+encodeURIComponent(b.dataset.name),{method:'DELETE'}); renderSuppliers(); });
+  $('#view').querySelectorAll('button[data-act="rn"]').forEach(b=> b.onclick = async ()=>{ const nv=prompt('Rename', b.dataset.name); if(!nv) return; await authFetch('/suppliers/'+encodeURIComponent(b.dataset.name),{method:'PUT',body:JSON.stringify({organization_name:nv})}); renderSuppliers(); });
+  for(const s of list){ await loadConnectionsPanel(s); }
+}
+async function loadConnectionsPanel(s){
+  const dst = '#ctable-'+s.id;
+  const list = await authFetch('/suppliers/'+encodeURIComponent(s.organization_name)+'/connections/');
+  $(dst).innerHTML = `<table><thead><tr><th>Name</th><th>Username</th><th>SMSc</th><th>Per Delivered</th><th>Charge</th><th></th></tr></thead><tbody>${
+    list.map(c=>`<tr>
+      <td>${c.connection_name}</td><td>${c.username||''}</td><td>${c.kannel_smsc||''}</td><td>${c.per_delivered?'Yes':'No'}</td><td>${c.charge_model||''}</td>
+      <td class="actions"><button class="btn btn-yellow" data-act="edit" data-n="${c.connection_name}">Edit inline</button>
+      <button class="btn btn-red" data-act="del" data-n="${c.connection_name}">Delete</button></td></tr>
+      <tr><td colspan="6"><div class="details-row" id="cedit-${s.id}-${c.connection_name}" style="display:none">
+        <div class="row">
+          <label>Name</label><input id="en-${s.id}" value="${c.connection_name}">
+          <label>Username</label><input id="eu-${s.id}" value="${c.username||''}">
+          <label>SMSc</label><input id="ek-${s.id}" value="${c.kannel_smsc||''}">
+          <label>Per Delivered</label><select id="ep-${s.id}"><option value="true">Yes</option><option value="false">No</option></select>
+          <label>Charge</label><select id="ec-${s.id}"><option>Per Submitted</option><option>Per Delivered</option></select>
+          <button class="btn btn-yellow" data-act="save" data-n="${c.connection_name}">Save</button>
+        </div></div></td></tr>`).join('')
+  }</tbody></table>`;
+  $('#cadd-'+s.id).onclick = async ()=>{
+    const body={connection_name:$('#cname-'+s.id).value.trim(), username:$('#cuser-'+s.id).value.trim()||null, kannel_smsc:$('#csmsc-'+s.id).value.trim()||null, per_delivered:$('#cpd-'+s.id).checked, charge_model:$('#ccm-'+s.id).value};
+    if(!body.connection_name) return; await authFetch('/suppliers/'+encodeURIComponent(s.organization_name)+'/connections/', {method:'POST', body:JSON.stringify(body)}); await loadConnectionsPanel(s);
+  };
+  $(dst).querySelectorAll('button[data-act="edit"]').forEach(b=> b.onclick = ()=>{ const p=$('#cedit-'+s.id+'-'+b.dataset.n); p.style.display = p.style.display==='none'?'':'none'; });
+  $(dst).querySelectorAll('button[data-act="del"]').forEach(b=> b.onclick = async ()=>{ if(!confirm('Delete connection?')) return; await authFetch('/suppliers/'+encodeURIComponent(s.organization_name)+'/connections/'+encodeURIComponent(b.dataset.n),{method:'DELETE'}); await loadConnectionsPanel(s); });
+  $(dst).querySelectorAll('button[data-act="save"]').forEach(b=> b.onclick = async ()=>{
+    const body={connection_name:$('#en-'+s.id).value.trim(), username:$('#eu-'+s.id).value.trim()||null, kannel_smsc:$('#ek-'+s.id).value.trim()||null, per_delivered:$('#ep-'+s.id).checked, charge_model:$('#ec-'+s.id).value.trim()||null};
+    await authFetch('/suppliers/'+encodeURIComponent(s.organization_name)+'/connections/'+encodeURIComponent(b.dataset.n),{method:'PUT', body:JSON.stringify(body)}); await loadConnectionsPanel(s);
+  });
+}
+
+async function viewConnections(){
+  navActivate('connections');
+  $('#filters').innerHTML = `<div class="card row"><label>Supplier</label><input id="sq" placeholder="Supplier name"/><label>Search</label><input id="cq" placeholder="contains…"/><button id="cf" class="btn btn-blue">Search</button></div>`;
+  onEnter('#filters input', renderConnections); $('#cf').onclick = renderConnections; await renderConnections();
+}
+async function renderConnections(){
+  const s=$('#sq').value.trim(); const q=$('#cq').value.trim();
+  if(!s){ $('#view').innerHTML = '<div class="card">Type a supplier name</div>'; return; }
+  const arr = await authFetch('/suppliers/'+encodeURIComponent(s)+'/connections/'+(q?`?q=${encodeURIComponent(q)}`:''));
+  $('#view').innerHTML = `<div class="card"><table><thead><tr><th>Name</th><th>Username</th><th>SMSc</th><th>Per Delivered</th><th>Charge</th></tr></thead><tbody>${
+    arr.map(c=>`<tr><td>${c.connection_name}</td><td>${c.username||''}</td><td>${c.kannel_smsc||''}</td><td>${c.per_delivered?'Yes':'No'}</td><td>${c.charge_model||''}</td></tr>`).join('')
+  }</tbody></table></div>`;
+}
+
+async function viewCountries(){
+  navActivate('countries');
+  $('#filters').innerHTML = `<div class="card row">
+    <input id="cq" placeholder="Search country…"/><button id="cF" class="btn btn-blue">Search</button>
+    <label>Name</label><input id="cName"/><label>MCC</label><input id="cMcc"/><label>2nd MCC</label><input id="cMcc2"/><label>3rd MCC</label><input id="cMcc3"/>
+    <button id="cCreate" class="btn btn-green">Create</button></div>`;
+  onEnter('#filters input', renderCountries); $('#cF').onclick = renderCountries;
+  $('#cCreate').onclick = async ()=>{ const body={name:$('#cName').value.trim(), mcc:$('#cMcc').value.trim()||null, mcc2:$('#cMcc2').value.trim()||null, mcc3:$('#cMcc3').value.trim()||null}; if(!body.name) return; await authFetch('/countries/',{method:'POST', body:JSON.stringify(body)}); $('#cName').value='';$('#cMcc').value='';$('#cMcc2').value='';$('#cMcc3').value=''; renderCountries(); };
+  await renderCountries();
+}
+async function renderCountries(){
+  const q=$('#cq').value.trim();
+  const list = await authFetch('/countries/'+(q?`?q=${encodeURIComponent(q)}`:''));
+  $('#view').innerHTML = `<div class="card"><table><thead><tr><th>Name</th><th>MCC</th><th>2nd MCC</th><th>3rd MCC</th><th></th></tr></thead><tbody>${
+    list.map(c=>`<tr><td>${c.name}</td><td>${c.mcc||''}</td><td>${c.mcc2||''}</td><td>${c.mcc3||''}</td>
+      <td class="actions"><button class="btn btn-yellow" data-act="edit" data-name="${c.name}">Edit</button><button class="btn btn-red" data-act="del" data-name="${c.name}">Delete</button></td></tr>
+      <tr><td colspan="5"><div class="details-row" id="ced-${c.name}" style="display:none">
+        <div class="row"><label>Name</label><input id="e_name_${c.name}" value="${c.name}">
+        <label>MCC</label><input id="e_mcc_${c.name}" value="${c.mcc||''}">
+        <label>2nd MCC</label><input id="e_mcc2_${c.name}" value="${c.mcc2||''}">
+        <label>3rd MCC</label><input id="e_mcc3_${c.name}" value="${c.mcc3||''}">
+        <button class="btn btn-yellow" data-act="save" data-name="${c.name}">Save</button></div></div></td></tr>`).join('')
+  }</tbody></table></div>`;
+  $('#view').querySelectorAll('button[data-act="del"]').forEach(b=> b.onclick = async ()=>{ if(!confirm('Delete?')) return; await authFetch('/countries/'+encodeURIComponent(b.dataset.name),{method:'DELETE'}); renderCountries(); });
+  $('#view').querySelectorAll('button[data-act="edit"]').forEach(b=> b.onclick = ()=>{ const d=$('#ced-'+b.dataset.name); d.style.display = d.style.display==='none'?'':'none'; });
+  $('#view').querySelectorAll('button[data-act="save"]').forEach(b=> b.onclick = async ()=>{
+    const nm=$('#e_name_'+b.dataset.name).value; const m=$('#e_mcc_'+b.dataset.name).value; const m2=$('#e_mcc2_'+b.dataset.name).value; const m3=$('#e_mcc3_'+b.dataset.name).value;
+    await authFetch('/countries/'+encodeURIComponent(b.dataset.name),{method:'PUT', body:JSON.stringify({name:nm,mcc:m,mcc2:m2,mcc3:m3})}); renderCountries();
+  });
+}
+
+async function viewNetworks(){
+  navActivate('networks');
+  $('#filters').innerHTML = `<div class="card row">
+    <label>Search name</label><input id="nq"><label>Country</label><input id="nc" list="dl_cty"><label>MCCMNC</label><input id="nmm">
+    <button id="nF" class="btn btn-blue">Search</button>
+    <label>Name</label><input id="nn"><label>Country</label><input id="ncountry" list="dl_cty"><label>MNC</label><input id="nmnc">
+    <button id="nCreate" class="btn btn-green">Create</button></div>`;
+  onEnter('#filters input', renderNetworks); $('#nF').onclick = renderNetworks;
+  $('#nCreate').onclick = async ()=>{
+    const body={name:$('#nn').value.trim(), country_name:$('#ncountry').value.trim()||null, mnc:$('#nmnc').value.trim()||null};
+    if(!body.name) return;
+    if(body.country_name){
+      try{
+        const arr = await authFetch('/countries/?q='+encodeURIComponent(body.country_name));
+        if(arr && arr[0]){
+          const m=[arr[0].mcc,arr[0].mcc2,arr[0].mcc3].filter(Boolean);
+          if(m.length>1){ const pick=prompt(`Country ${arr[0].name} has multiple MCCs (${m.join(', ')}). Type the one to use:`, m[0]); if(pick) body.mcc=pick; }
+          else if(m.length===1){ body.mcc=m[0]; }
+        }
+      }catch{}
+    }
+    await authFetch('/networks/',{method:'POST', body:JSON.stringify(body)}); $('#nn').value='';$('#ncountry').value='';$('#nmnc').value=''; renderNetworks();
+  };
+  await renderNetworks();
+}
+async function renderNetworks(){
+  const q=$('#nq').value.trim(), c=$('#nc').value.trim(), mm=$('#nmm').value.trim();
+  const arr = await authFetch('/networks/'+(q||c||mm?`?${new URLSearchParams({q:q||'',country:c||'',mccmnc:mm||''})}`:''));
+  $('#view').innerHTML = `<div class="card"><table><thead><tr><th>Name</th><th>Country</th><th>MCC</th><th>MNC</th><th>MCCMNC</th><th></th></tr></thead><tbody>${
+    arr.map(n=>`<tr><td>${n.name}</td><td>${n.country_name||''}</td><td>${n.mcc||''}</td><td>${n.mnc||''}</td><td>${n.mccmnc||''}</td>
+      <td class="actions"><button class="btn btn-yellow" data-act="edit" data-name="${n.name}">Edit</button><button class="btn btn-red" data-act="del" data-name="${n.name}">Delete</button></td></tr>
+      <tr><td colspan="6"><div class="details-row" id="ned-${n.name}" style="display:none"><div class="row">
+        <label>Name</label><input id="en_${n.name}" value="${n.name}"><label>Country</label><input id="ec_${n.name}" value="${n.country_name||''}" list="dl_cty">
+        <label>MCC</label><input id="em_${n.name}" value="${n.mcc||''}" readonly><label>MNC</label><input id="emn_${n.name}" value="${n.mnc||''}">
+        <label>MCCMNC</label><input id="emm_${n.name}" value="${n.mccmnc||''}" readonly><button class="btn btn-yellow" data-act="save" data-name="${n.name}">Save</button>
+      </div></div></td></tr>`).join('')
+  }</tbody></table></div>`;
+  $('#view').querySelectorAll('button[data-act="del"]').forEach(b=> b.onclick = async ()=>{ if(!confirm('Delete?')) return; await authFetch('/networks/by-name/'+encodeURIComponent(b.dataset.name),{method:'DELETE'}); renderNetworks(); });
+  $('#view').querySelectorAll('button[data-act="edit"]').forEach(b=> b.onclick = ()=>{ const d=$('#ned-'+b.dataset.name); d.style.display = d.style.display==='none'?'':'none'; });
+  $('#view').querySelectorAll('button[data-act="save"]').forEach(b=> b.onclick = async ()=>{
+    const nm=$('#en_'+b.dataset.name).value.trim(); const c=$('#ec_'+b.dataset.name).value.trim(); const mnc=$('#emn_'+b.dataset.name).value.trim(); let mcc=$('#em_'+b.dataset.name).value.trim();
+    if(c){ try{ const arr=await authFetch('/countries/?q='+encodeURIComponent(c)); if(arr && arr[0]){ const m=[arr[0].mcc,arr[0].mcc2,arr[0].mcc3].filter(Boolean); if(m.length>1 && !m.includes(mcc)){ const pick=prompt(`Country ${arr[0].name} has multiple MCCs (${m.join(', ')}). Type the one to use:`, m[0]); if(pick) mcc=pick; } else if(m.length===1){ mcc=m[0]; } } }catch{} }
+    const mm = mcc && mnc ? mcc+mnc : ($('#emm_'+b.dataset.name).value||null);
+    await authFetch('/networks/by-name/'+encodeURIComponent(b.dataset.name),{method:'PUT', body:JSON.stringify({name:nm, country_name:c||null, mnc:mnc||null, mcc:mcc||null, mccmnc:mm||null})}); renderNetworks();
+  });
+}
+
+async function viewParsers(){
+  navActivate('parsers'); $('#filters').innerHTML = '';
+  const list = await authFetch('/parsers/').catch(()=>[]);
+  $('#view').innerHTML = `<div class="card"><div class="row"><input id="pname" placeholder="Template name"><input id="pdesc" placeholder="Description"><button id="pcreate" class="btn btn-green">Create</button></div></div><div id="plist"></div>`;
+  $('#pcreate').onclick = async ()=>{ const body={name:$('#pname').value.trim(), description:$('#pdesc').value.trim(), html:"<p>Describe your parser here</p>", active:false}; if(!body.name) return; await authFetch('/parsers/',{method:'POST', body:JSON.stringify(body)}); await viewParsers(); };
+  const wrap=$('#plist');
+  wrap.innerHTML = list.map(p=>`<div class="card"><h3>${p.name}</h3><div contenteditable="true" id="html_${p.id}" style="min-height:120px;border:1px dashed #1f2937;padding:8px">${p.html||''}</div>
+    <div class="row right"><label><input type="checkbox" id="act_${p.id}" ${p.active?'checked':''}> Active</label>
+    <button class="btn btn-yellow" data-id="${p.id}" data-act="save">Save</button><button class="btn btn-red" data-id="${p.id}" data-act="del">Delete</button></div></div>`).join('');
+  wrap.querySelectorAll('button[data-act="save"]').forEach(b=> b.onclick = async ()=>{ const id=b.dataset.id; const html=$('#html_'+id).innerHTML; const active=$('#act_'+id).checked; await authFetch('/parsers/'+id,{method:'PUT', body:JSON.stringify({html,active})}); alert('Saved'); });
+  wrap.querySelectorAll('button[data-act="del"]').forEach(b=> b.onclick = async ()=>{ if(!confirm('Delete?')) return; await authFetch('/parsers/'+b.dataset.id,{method:'DELETE'}); await viewParsers(); });
+}
+
+async function viewSettings() {
+  __ensureSettingsCSS(); (async () => {
+  __ensureSettingsCSS(); (async (async () => { __ensureSettingsCSS();
+    // Fetch enums
+    const enums = await authFetch(API_BASE + '/conf/enums', { method: 'GET' });
+
+    // Local state for edit
+    const state = JSON.parse(JSON.stringify(enums || {
+      route_type: ["Direct","SS7","SIM","Local Bypass"],
+      known_hops: ["0-Hop","1-Hop","2-Hops","N-Hops"],
+      registration_required: ["Yes","No"]
+    }));
+
+    let dirty = false;
+
+    const app  = $('#app');
+    app.innerHTML = '';
+    const page = el('div', { class: 'page' });
+    page.append(el('h1', null, 'Settings'));
+
+    // ---- Drop Down Menus (category frame) ----
+    const card = el('div', { class: 'card' });
+    card.append(el('h2', null, 'Drop Down Menus'));
+
+    function renderList(key, label) {
+      const block = el('div', { class: 'fieldset' });
+      block.append(el('label', { class: 'lbl' }, label));
+
+      const ul = el('ul', { class: 'pill-list' });
+      (state[key] || []).forEach((v, idx) => {
+        const li = el('li', { class: 'pill-row' },
+          el('span', { class: 'pill' }, v),
+          btn('Edit', 'yellow', () => {
+            const nv = prompt('Edit value', v);
+            if (nv && nv.trim() && nv !== v) {
+              state[key][idx] = nv.trim();
+              dirty = true; updateSave(); rerender();
+            }
+          }),
+          btn('Delete', 'red', () => {
+            state[key].splice(idx, 1);
+            dirty = true; updateSave(); rerender();
+          })
+        );
+        ul.append(li);
+      });
+
+      const addRow = el('div', { class: 'row' });
+      const inp = input({ placeholder: 'Add new…', id: `add-${key}` });
+      const addBtn = btn('Add', 'green', () => {
+        const nv = (inp.value || '').trim();
+        if (!nv) return;
+        state[key] = state[key] || [];
+        if (!state[key].includes(nv)) state[key].push(nv);
+        inp.value = '';
+        dirty = true; updateSave(); rerender();
+      });
+      addRow.append(inp, addBtn);
+
+      block.append(ul, addRow);
+      return block;
+    }
+
+    // Build grouped frame
+    let listsWrap = el('div', { class: 'lists-wrap' },
+      renderList('route_type', 'Route Type'),
+      renderList('known_hops', 'Known Hops'),
+      renderList('registration_required', 'Registration Required')
+    );
+    card.append(listsWrap);
+    page.append(card);
+
+    const saveBtn = btn('Save All', 'green', async () => {
+      await authFetch(API_BASE + '/conf/enums', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(state)
+      });
+      dirty = false; updateSave();
+      toast('Saved.');
+    });
+    saveBtn.id = 'save-all';
+    saveBtn.style.marginTop = '12px';
+
+    function updateSave() {
+      saveBtn.style.display = dirty ? '' : 'none';
+      window.onbeforeunload = dirty ? (() => 'Unsaved changes') : null;
+    }
+
+    function rerender() {
+      const newWrap = el('div', { class: 'lists-wrap' },
+        renderList('route_type', 'Route Type'),
+        renderList('known_hops', 'Known Hops'),
+        renderList('registration_required', 'Registration Required')
+      );
+      listsWrap.replaceWith(newWrap);
+      listsWrap = newWrap; // update local ref
+    }
+
+    app.append(page, saveBtn);
+    updateSave();
+  });
+}
+
+
+function render(view){
+  if(!TOKEN){ openLogin(); return; }
+  switch(view){
+    case 'trends': return viewTrends();
+    case 'offers': return viewOffers();
+    case 'suppliers': return viewSuppliers();
+    case 'connections': return viewConnections();
+    case 'countries': return viewCountries();
+    case 'networks': return viewNetworks();
+    case 'parsers': return viewParsers();
+    case 'settings': return viewSettings();
+  }
+}
+document.querySelectorAll('nav button').forEach(b=> b.onclick = ()=> render(b.dataset.view));
+window.addEventListener('load', async ()=>{ setAPIInfo(); const ok=await verifyToken(); if(ok){ setUser('admin'); render('trends'); } else { openLogin(); } });
+
+function __ensureSettingsCSS() {
+  if (document.getElementById('settings-group-css')) return;
+  const style = document.createElement('style');
+  style.id = 'settings-group-css';
+  style.textContent = `
+.pill-list { list-style: none; padding: 0; margin: 8px 0; }
+.pill-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+.pill { display: inline-block; padding: 4px 8px; border-radius: 999px; background: #eee; }
+.fieldset { margin: 12px 0; }
+.fieldset .lbl { display: block; font-weight: 600; margin-bottom: 6px; }
+.card { border: 1px solid #ddd; border-radius: 10px; padding: 14px; margin-top: 8px; background: #fff; }
+.lists-wrap { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+`;
+  document.head.appendChild(style);
+}

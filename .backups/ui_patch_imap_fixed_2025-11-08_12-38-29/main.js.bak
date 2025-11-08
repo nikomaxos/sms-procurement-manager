@@ -1,0 +1,178 @@
+(() => {
+  const $ = (s)=>document.querySelector(s);
+  const root=$("#root"), nav=$("#nav");
+  const API = `http://${location.hostname}:8010`;
+
+  const token=()=>localStorage.getItem("token")||"";
+  const setToken=t=>localStorage.setItem("token",t);
+  const clearToken=()=>localStorage.removeItem("token");
+  async function authFetch(path,opt={}){
+    const h=Object.assign({"Content-Type":"application/json","Authorization":"Bearer "+token()},opt.headers||{});
+    const r=await fetch(API+path,{...opt,headers:h});
+    if(r.status===401)throw new Error("Unauthorized");
+    if(!r.ok)throw new Error(`HTTP ${r.status}`);
+    return r.json();
+  }
+
+  function msg(t,cls="notice"){return `<div class="${cls}">${t}</div>`;}
+  function row(...c){return `<tr>${c.map(x=>`<td>${x}</td>`).join("")}</tr>`;}
+  function table(hd,body){return `<table class="table"><thead><tr>${hd.map(h=>`<th>${h}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table>`;}
+
+  async function viewDashboard(){
+    root.innerHTML=`<h2>Dashboard</h2><p class="muted">Use top menu.</p>`;
+  }
+
+  async function viewSettings(tab="imap"){
+    const im=await authFetch("/settings/imap");
+    const sc=await authFetch("/settings/scrape").catch(()=>({enabled:false}));
+    root.innerHTML=`
+      <h2>Settings</h2>
+      <div class="actions">
+        <button id="tab_imap" class="${tab==='imap'?'primary':''}">Email (IMAP)</button>
+        <button id="tab_scrape" class="${tab==='scrape'?'primary':''}">Scraping Settings</button>
+      </div>
+      <div id="pane"></div>`;
+    $("#tab_imap").onclick=()=>viewSettings("imap");
+    $("#tab_scrape").onclick=()=>viewSettings("scrape");
+
+    if(tab==="imap"){
+      $("#pane").innerHTML=`
+        <h3>Email (IMAP)</h3>
+        <div class="grid-4">
+          <div><label>Host</label><input id="im_host" value="${im.host||""}"></div>
+          <div><label>Port</label><input id="im_port" type="number" value="${im.port??993}"></div>
+          <div><label>Username</label><input id="im_user" value="${im.username||""}"></div>
+          <div><label>Password</label><input id="im_pass" type="password" value="${im.password||""}"></div>
+        </div>
+        <div class="grid-3">
+          <div><label>SSL</label><input id="im_ssl" type="checkbox" ${im.ssl?"checked":""}></div>
+          <div><label>Default Folder</label><input id="im_folder" value="${im.folder||"INBOX"}"></div>
+          <div><label>Enabled</label><input id="im_enabled" type="checkbox" ${im.enabled?"checked":""}></div>
+        </div>
+        <div class="actions">
+          <button id="im_save" class="primary">Save</button>
+          <button id="im_test">Test connection</button>
+          <button id="im_fetch">Fetch folders</button>
+        </div>
+        <div id="im_msg"></div>
+        <div id="im_folders" class="hidden">
+          <h3>IMAP Folders</h3>
+          <div class="grid-2">
+            <div>
+              <label>Available</label>
+              <select id="im_folders_list" multiple></select>
+            </div>
+            <div>
+              <label>Selected</label>
+              <div id="im_selected" class="notice">(none)</div>
+            </div>
+          </div>
+        </div>`;
+      $("#im_save").onclick=async()=>{
+        await authFetch("/settings/imap",{method:"POST",body:JSON.stringify({
+          host:$("#im_host").value,port:Number($("#im_port").value),
+          username:$("#im_user").value,password:$("#im_pass").value,
+          ssl:$("#im_ssl").checked,folder:$("#im_folder").value,enabled:$("#im_enabled").checked
+        })});
+        $("#im_msg").innerHTML="Saved.";
+      };
+      $("#im_test").onclick=async()=>{
+        $("#im_msg").innerHTML="Testing…";
+        try{
+          const r=await authFetch("/settings/imap/test",{method:"POST",body:JSON.stringify({
+            host:$("#im_host").value,port:Number($("#im_port").value),
+            username:$("#im_user").value,password:$("#im_pass").value,ssl:$("#im_ssl").checked
+          })});
+          $("#im_msg").innerHTML=`OK — ${r.greeting||"connected"}`;
+        }catch(e){$("#im_msg").innerHTML=`<span class=badge>${e.message}</span>`;}
+      };
+      $("#im_fetch").onclick=async()=>{
+        $("#im_msg").innerHTML="Fetching folders…";
+        try{
+          const r=await authFetch("/settings/imap/folders",{method:"POST",body:JSON.stringify({
+            host:$("#im_host").value,port:Number($("#im_port").value),
+            username:$("#im_user").value,password:$("#im_pass").value,ssl:$("#im_ssl").checked
+          })});
+          const list=$("#im_folders_list");
+          list.innerHTML="";
+          (r.folders||[]).forEach(f=>{
+            if(!f)return;
+            const opt=document.createElement("option");
+            opt.value=f;opt.textContent=f;list.appendChild(opt);
+          });
+          if((r.folders||[]).length>0){$("#im_folders").classList.remove("hidden");}
+          list.onchange=()=>{
+            const sel=[...list.selectedOptions].map(o=>o.value);
+            $("#im_selected").textContent=sel.join(", ")||"(none)";
+          };
+          $("#im_msg").innerHTML=`Found ${(r.folders||[]).length} folder(s).`;
+        }catch(e){$("#im_msg").innerHTML=`<span class=badge>${e.message}</span>`;}
+      };
+    } else if(tab==="scrape"){
+      $("#pane").innerHTML=`
+        <h3>Scraping Settings</h3>
+        <div class="grid-3">
+          <div><label>Enabled</label><input id=sc_enabled type=checkbox ${sc.enabled?"checked":""}></div>
+          <div><label>Interval (min)</label><input id=sc_interval type=number value="${sc.interval_minutes||30}"></div>
+          <div><label>User-Agent</label><input id=sc_ua value="${sc.user_agent||"Mozilla/5.0"}"></div>
+        </div>
+        <div class="grid-3">
+          <div><label>Max Concurrency</label><input id=sc_conc type=number value="${sc.max_concurrency||4}"></div>
+        </div>
+        <label>Start URLs</label><textarea id=sc_urls>${(sc.start_urls||[]).join("\n")}</textarea>
+        <label>Allow Domains</label><textarea id=sc_allow>${(sc.allow_domains||[]).join("\n")}</textarea>
+        <label>Block Domains</label><textarea id=sc_block>${(sc.block_domains||[]).join("\n")}</textarea>
+        <div class="actions"><button id=sc_save class=primary>Save</button></div>
+        <div id=sc_msg></div>`;
+      $("#sc_save").onclick=async()=>{
+        await authFetch("/settings/scrape",{method:"POST",body:JSON.stringify({
+          enabled:$("#sc_enabled").checked,
+          interval_minutes:Number($("#sc_interval").value),
+          user_agent:$("#sc_ua").value,
+          max_concurrency:Number($("#sc_conc").value),
+          start_urls:$("#sc_urls").value.split("\n").map(s=>s.trim()).filter(Boolean),
+          allow_domains:$("#sc_allow").value.split("\n").map(s=>s.trim()).filter(Boolean),
+          block_domains:$("#sc_block").value.split("\n").map(s=>s.trim()).filter(Boolean)
+        })});
+        $("#sc_msg").innerHTML="Saved.";
+      };
+    }
+  }
+
+  async function render(v){
+    try{
+      await authFetch("/users/me");
+      nav.hidden=false;
+      if(v==="settings")return viewSettings();
+      if(v==="dashboard")return viewDashboard();
+      if(v==="countries"||v==="networks"||v==="offers"){location.reload();}
+      return viewDashboard();
+    }catch{showLogin();}
+  }
+
+  function showLogin(){
+    nav.hidden=true;
+    root.innerHTML=`<h2>Login</h2>
+      <label>Username</label><input id=u value=admin>
+      <label>Password</label><input id=p type=password value=admin123>
+      <button id=loginBtn class=primary>Login</button>
+      <div id=msg class=muted></div>`;
+    $("#loginBtn").onclick=async()=>{
+      $("#msg").textContent="";
+      try{
+        const r=await fetch(API+"/users/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username:u.value,password:p.value})});
+        const j=await r.json();
+        setToken(j.access_token);
+        render("dashboard");
+      }catch(e){$("#msg").textContent=e.message;}
+    };
+  }
+
+  nav.addEventListener("click",e=>{
+    const v=e.target.dataset.view;
+    if(!v)return;
+    render(v);
+  });
+  $("#logout").onclick=()=>{clearToken();showLogin();};
+  render("dashboard");
+})();

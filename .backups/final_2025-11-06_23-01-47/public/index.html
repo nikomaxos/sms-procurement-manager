@@ -1,0 +1,68 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>SMS Procurement Manager</title>
+  <style>
+    :root{
+      --bg:#1f1713;        /* warm dark espresso */
+      --panel:#2a1f1a;     /* panel */
+      --accent:#d98b48;    /* amber */
+      --accent-2:#b86b3d;  /* cinnamon */
+      --text:#f6efe9;      /* warm off-white */
+      --muted:#cbb7a7;
+      --error:#ff5d5d;
+      --ok:#7bd88f;
+      --radius:14px;
+    }
+    html,body{height:100%; margin:0; background:var(--bg); color:var(--text); font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;}
+    .wrap{max-width:1100px; margin:0 auto; padding:20px;}
+    .nav{display:flex; gap:8px; margin-bottom:16px; position:sticky; top:0; background:linear-gradient(180deg, rgba(31,23,19,.98), rgba(31,23,19,.6)); backdrop-filter: blur(6px); padding:10px; border-radius:var(--radius);}
+    .btn{background:var(--panel); color:var(--text); border:1px solid rgba(255,255,255,.08); padding:10px 14px; border-radius:var(--radius); cursor:pointer}
+    .btn:hover{background:#3a2c24}
+    .accent{background:var(--accent); color:#1a120d; border:none}
+    .panel{background:var(--panel); padding:16px; border-radius:var(--radius); border:1px solid rgba(255,255,255,.08)}
+    input,select{background:#201712; color:var(--text); border:1px solid rgba(255,255,255,.12); border-radius:12px; padding:10px 12px; outline:none}
+    input::placeholder{color:#9b8a7d}
+    .grid{display:grid; gap:12px}
+    .two{grid-template-columns: 1fr 1fr}
+    .three{grid-template-columns: repeat(3,1fr)}
+    .compact fieldset{border:none; margin:0; padding:0}
+    .compact legend{font-weight:600; color:var(--muted); margin-bottom:8px}
+    .compact .row{display:grid; grid-template-columns: 180px 1fr; align-items:center; gap:10px; margin:6px 0}
+    .error{color:var(--error)}
+    .muted{color:var(--muted)}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="nav">
+      <button class="btn" data-view="offers">Offers</button>
+      <button class="btn" data-view="networks">Networks</button>
+      <button class="btn" data-view="parsers">Parsers</button>
+      <button class="btn" data-view="settings">Settings</button>
+      <div style="flex:1"></div>
+      <div id="user-slot" class="muted">Guest</div>
+      <button id="logout" class="btn">Logout</button>
+    </div>
+
+    <div id="login-panel" class="panel" style="display:none">
+      <h2>Login</h2>
+      <div class="grid two">
+        <label>Username <input id="login-username" placeholder="admin"></label>
+        <label>Password <input id="login-password" type="password" placeholder="admin123"></label>
+      </div>
+      <div style="margin-top:12px">
+        <button id="login-btn" class="btn accent">Login</button>
+        <span id="login-error" class="error" style="margin-left:10px"></span>
+      </div>
+    </div>
+
+    <div id="content" class="panel"></div>
+  </div>
+
+  <script src="env.js"></script>
+  <script src="main.js"></script>
+</body>
+</html>

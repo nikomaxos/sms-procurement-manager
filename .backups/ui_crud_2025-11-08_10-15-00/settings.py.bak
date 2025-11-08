@@ -1,0 +1,154 @@
+from fastapi import APIRouter, HTTPException, Header
+from typing import Optional, Dict, Any, List
+from pathlib import Path
+import json, imaplib, ssl
+
+from app.core.auth import verify_token
+
+router = APIRouter(prefix="/settings", tags=["settings"])
+DATA_FILE = Path("/app/data/settings.json")
+
+DEFAULTS = {
+    "imap": {
+        "host": "", "port": 993, "username": "", "password": "",
+        "ssl": True, "folder": "INBOX", "enabled": False, "selected_folders": []
+    },
+    "scrape": {
+        "enabled": False, "interval_minutes": 30, "user_agent": "Mozilla/5.0",
+        "max_concurrency": 4, "start_urls": [], "allow_domains": [],
+        "block_domains": [], "render_js": False
+    }
+}
+
+def _auth(auth: Optional[str]) -> Dict[str, Any]:
+    if not auth or not auth.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return verify_token(auth.split(" ", 1)[1])
+
+def _load() -> Dict[str, Any]:
+    if DATA_FILE.exists():
+        try:
+            with DATA_FILE.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+                for k,v in DEFAULTS.items():
+                    if k not in data or not isinstance(data[k], dict):
+                        data[k] = v
+                return data
+        except Exception:
+            pass
+    _save(DEFAULTS)
+    return DEFAULTS
+
+def _save(d: Dict[str, Any]) -> None:
+    DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with DATA_FILE.open("w", encoding="utf-8") as f:
+        json.dump(d, f, indent=2, ensure_ascii=False)
+
+@router.get("/imap")
+def get_imap(authorization: Optional[str] = Header(None)):
+    _auth(authorization)
+    return _load()["imap"]
+
+@router.post("/imap")
+def set_imap(body: Dict[str, Any], authorization: Optional[str] = Header(None)):
+    _auth(authorization)
+    data = _load()
+    imap = data["imap"]
+    for k in imap.keys():
+        if k in body:
+            imap[k] = body[k]
+    _save(data)
+    return {"ok": True, "imap": imap}
+
+@router.post("/imap/test")
+def imap_test(body: Dict[str, Any], authorization: Optional[str] = Header(None)):
+    _auth(authorization)
+    host = str(body.get("host","")).strip()
+    port = int(body.get("port", 993))
+    user = str(body.get("username",""))
+    pwd  = str(body.get("password",""))
+    use_ssl = bool(body.get("ssl", True))
+    if not host or not user:
+        raise HTTPException(400, "Host and username required")
+    try:
+        if use_ssl:
+            M = imaplib.IMAP4_SSL(host, port)
+        else:
+            M = imaplib.IMAP4(host, port)
+        if pwd:
+            M.login(user, pwd)
+        greet = M.welcome.decode("utf-8","ignore") if isinstance(M.welcome, (bytes,bytearray)) else str(M.welcome)
+        caps = []
+        try:
+            typ, data = M.capability()
+            if typ == "OK":
+                line = data[0].decode("utf-8","ignore") if data and isinstance(data[0], (bytes,bytearray)) else ""
+                caps = line.split()
+        except Exception:
+            pass
+        try: M.logout()
+        except Exception: pass
+        return {"ok": True, "greeting": greet, "capabilities": caps}
+    except Exception as e:
+        raise HTTPException(400, f"IMAP test failed: {e}")
+
+@router.post("/imap/folders")
+def imap_folders(body: Dict[str, Any], authorization: Optional[str] = Header(None)):
+    _auth(authorization)
+    host = str(body.get("host","")).strip()
+    port = int(body.get("port", 993))
+    user = str(body.get("username",""))
+    pwd  = str(body.get("password",""))
+    use_ssl = bool(body.get("ssl", True))
+    if not host or not user:
+        raise HTTPException(400, "Host and username required")
+    def decode_folder(raw: str) -> str:
+        # try to extract last quoted part or last token
+        name = raw
+        if '"' in raw:
+            parts = raw.split('"')
+            if len(parts) >= 2:
+                name = parts[-2]
+        else:
+            name = raw.split()[-1]
+        # Attempt IMAP UTF-7 decoding
+        try:
+            from imaplib import _decode_utf7
+            return _decode_utf7(name)
+        except Exception:
+            return name
+    try:
+        if use_ssl:
+            M = imaplib.IMAP4_SSL(host, port)
+        else:
+            M = imaplib.IMAP4(host, port)
+        if pwd:
+            M.login(user, pwd)
+        typ, data = M.list()
+        lst: List[str] = []
+        for ln in (data or []):
+            s = ln.decode("utf-8","ignore") if isinstance(ln, (bytes,bytearray)) else str(ln)
+            lst.append(decode_folder(s))
+        try: M.logout()
+        except Exception: pass
+        uniq = sorted({x for x in lst if x})
+        return {"ok": True, "folders": uniq}
+    except Exception as e:
+        raise HTTPException(400, f"IMAP list failed: {e}")
+
+# keep simple scraper endpoints
+@router.get("/scrape")
+def get_scrape(authorization: Optional[str] = Header(None)):
+    _auth(authorization)
+    return _load()["scrape"]
+
+@router.post("/scrape")
+def set_scrape(body: Dict[str, Any], authorization: Optional[str] = Header(None)):
+    _auth(authorization)
+    data = _load()
+    scr = data["scrape"]
+    for k in scr.keys():
+        if k in body:
+            scr[k] = body[k]
+    _save(data)
+    return {"ok": True, "scrape": scr}

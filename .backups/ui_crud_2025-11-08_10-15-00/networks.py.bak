@@ -1,0 +1,72 @@
+from fastapi import APIRouter, HTTPException, Header
+from typing import Optional, Dict, Any, List
+from pathlib import Path
+import json
+
+from app.core.auth import verify_token
+
+router = APIRouter(prefix="/networks", tags=["networks"])
+FILE = Path("/app/data/networks.json")
+
+def _auth(a: Optional[str]):
+    if not a or not a.startswith("Bearer "): 
+        raise HTTPException(401, "Unauthorized")
+    verify_token(a.split(" ",1)[1])
+
+def _load() -> List[Dict[str, Any]]:
+    if FILE.exists():
+        try:
+            return json.loads(FILE.read_text("utf-8"))
+        except Exception:
+            pass
+    seed = [
+        {"id":1,"name":"COSMOTE","mccmnc":"20201","country_code":"GR"},
+        {"id":2,"name":"Orange RO","mccmnc":"22610","country_code":"RO"},
+    ]
+    FILE.parent.mkdir(parents=True, exist_ok=True)
+    FILE.write_text(json.dumps(seed, indent=2), "utf-8")
+    return seed
+
+def _save(items: List[Dict[str, Any]]):
+    FILE.write_text(json.dumps(items, indent=2, ensure_ascii=False), "utf-8")
+
+@router.get("/")
+def list_networks(authorization: Optional[str] = Header(None), country: Optional[str] = None):
+    _auth(authorization)
+    items = _load()
+    if country:
+        items = [x for x in items if x["country_code"].upper() == country.upper()]
+    return {"items": items}
+
+@router.post("/")
+def create_network(body: Dict[str, Any], authorization: Optional[str] = Header(None)):
+    _auth(authorization)
+    items = _load()
+    nid = (max([x["id"] for x in items]) + 1) if items else 1
+    name = str(body.get("name","")).strip()
+    mccmnc = str(body.get("mccmnc","")).strip()
+    country_code = str(body.get("country_code","")).upper().strip()
+    if not name or not mccmnc or not country_code:
+        raise HTTPException(400, "name, mccmnc, country_code required")
+    rec = {"id": nid, "name": name, "mccmnc": mccmnc, "country_code": country_code}
+    items.append(rec); _save(items)
+    return {"ok": True, "item": rec}
+
+@router.put("/{item_id}")
+def update_network(item_id: int, body: Dict[str, Any], authorization: Optional[str] = Header(None)):
+    _auth(authorization)
+    items = _load()
+    for x in items:
+        if x["id"] == item_id:
+            for k in ("name","mccmnc","country_code"):
+                if k in body: x[k] = str(body[k]).strip() if k!="country_code" else str(body[k]).upper().strip()
+            _save(items); return {"ok": True, "item": x}
+    raise HTTPException(404, "not found")
+
+@router.delete("/{item_id}")
+def delete_network(item_id: int, authorization: Optional[str] = Header(None)):
+    _auth(authorization)
+    items = _load()
+    n = [x for x in items if x["id"] != item_id]
+    if len(n) == len(items): raise HTTPException(404, "not found")
+    _save(n); return {"ok": True}

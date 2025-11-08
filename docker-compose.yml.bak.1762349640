@@ -1,0 +1,36 @@
+
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: smsdb
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [stack]
+
+  api:
+    build:
+      context: .
+      dockerfile: api.Dockerfile
+    environment:
+      - DB_URL=postgresql://postgres:postgres@postgres:5432/smsdb
+    ports:
+      - "8010:8000"
+    depends_on: [postgres]
+    networks: [stack]
+
+  web:
+    image: nginx:stable-alpine
+    volumes:
+      - ./web/public:/usr/share/nginx/html:ro
+    ports:
+      - "5183:80"
+    networks: [stack]
+
+networks:
+  stack:
+
+volumes:
+  pgdata:

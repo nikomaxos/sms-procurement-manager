@@ -1,0 +1,140 @@
+(() => {
+  const $ = (s) => document.querySelector(s);
+  const root = $("#root"), nav = $("#nav");
+  const API = `http://${location.hostname}:8010`;
+
+  const token = () => localStorage.getItem("token") || "";
+  const setToken = (t) => localStorage.setItem("token", t);
+  const clearToken = () => localStorage.removeItem("token");
+
+  async function authFetch(path, opts={}) {
+    const headers = Object.assign({"Content-Type":"application/json","Authorization":"Bearer "+token()}, opts.headers||{});
+    const res = await fetch(API + path, {...opts, headers});
+    if (res.status === 401) throw new Error("Unauthorized");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  }
+
+  function showLogin() {
+    nav.hidden = true;
+    root.innerHTML = `
+      <h2>Login</h2>
+      <div class="row">
+        <div><label>Username</label><input id="u" value="admin"></div>
+        <div><label>Password</label><input id="p" type="password" value="admin123"></div>
+      </div>
+      <div class="actions"><button class="primary" id="loginBtn">Login</button></div>
+      <p class="muted">API: ${API}</p>
+      <div id="msg" class="error"></div>
+    `;
+    $("#loginBtn").onclick = async () => {
+      $("#msg").textContent = "";
+      try {
+        const r = await fetch(API + "/users/login", {
+          method: "POST",
+          headers: {"Content-Type":"application/json"},
+          body: JSON.stringify({username: $("#u").value.trim(), password: $("#p").value})
+        });
+        if (!r.ok) throw new Error(`Login failed (${r.status})`);
+        const j = await r.json();
+        if (!j.access_token) throw new Error("No token");
+        setToken(j.access_token);
+        render("dashboard");
+      } catch(e){ $("#msg").textContent = e.message; }
+    };
+  }
+
+  async function viewDashboard() {
+    const d = new Date().toISOString().slice(0,10);
+    const trends = await authFetch(`/metrics/trends?d=${d}`);
+    root.innerHTML = `<h2>Dashboard</h2>
+      <p class="muted">Date: ${trends.date}</p>
+      <pre>${JSON.stringify(trends.series, null, 2)}</pre>`;
+  }
+
+  async function viewOffers() {
+    const r = await authFetch(`/offers/?limit=50&offset=0`);
+    root.innerHTML = `<h2>Offers</h2><pre>${JSON.stringify(r, null, 2)}</pre>`;
+  }
+
+  async function viewSettings() {
+    const e = await authFetch(`/conf/enums`);
+    const im = await authFetch(`/settings/imap`);
+    const sc = await authFetch(`/settings/scrape`);
+    root.innerHTML = `
+      <h2>Settings</h2>
+      <h3>Enums</h3><pre>${JSON.stringify(e, null, 2)}</pre>
+
+      <h3>IMAP</h3>
+      <div class="row">
+        <div><label>Host</label><input id="im_host" value="${im.host||""}"></div>
+        <div><label>Port</label><input id="im_port" type="number" value="${im.port||993}"></div>
+        <div><label>Username</label><input id="im_user" value="${im.username||""}"></div>
+        <div><label>Password</label><input id="im_pass" type="password" value="${im.password||""}"></div>
+        <div><label>SSL</label><input id="im_ssl" type="checkbox" ${im.ssl?"checked":""}></div>
+        <div><label>Folder</label><input id="im_folder" value="${im.folder||"INBOX"}"></div>
+        <div><label>Enabled</label><input id="im_enabled" type="checkbox" ${im.enabled?"checked":""}></div>
+      </div>
+      <div class="actions"><button id="saveImap" class="primary">Save IMAP</button></div>
+
+      <h3>Scraper</h3>
+      <div class="row">
+        <div><label>Enabled</label><input id="sc_enabled" type="checkbox" ${sc.enabled?"checked":""}></div>
+        <div><label>Interval (min)</label><input id="sc_interval" type="number" value="${sc.interval_minutes||30}"></div>
+        <div><label>User-Agent</label><input id="sc_ua" value="${sc.user_agent||"Mozilla/5.0"}"></div>
+        <div><label>Max Concurrency</label><input id="sc_conc" type="number" value="${sc.max_concurrency||4}"></div>
+      </div>
+      <label>Start URLs (one per line)</label><textarea id="sc_urls">${(sc.start_urls||[]).join("\n")}</textarea>
+      <label>Allow Domains (one per line)</label><textarea id="sc_allow">${(sc.allow_domains||[]).join("\n")}</textarea>
+      <label>Block Domains (one per line)</label><textarea id="sc_block">${(sc.block_domains||[]).join("\n")}</textarea>
+      <label>Render JS</label><input id="sc_render" type="checkbox" ${sc.render_js?"checked":""}>
+      <div class="actions"><button id="saveScrape" class="primary">Save Scraper</button></div>
+      <div id="msg" class="ok"></div>
+    `;
+    $("#saveImap").onclick = async () => {
+      const body = {
+        host: $("#im_host").value, port: Number($("#im_port").value),
+        username: $("#im_user").value, password: $("#im_pass").value,
+        ssl: $("#im_ssl").checked, folder: $("#im_folder").value,
+        enabled: $("#im_enabled").checked
+      };
+      await authFetch("/settings/imap", {method:"POST", body: JSON.stringify(body)});
+      $("#msg").textContent = "IMAP saved";
+    };
+    $("#saveScrape").onclick = async () => {
+      const body = {
+        enabled: $("#sc_enabled").checked,
+        interval_minutes: Number($("#sc_interval").value),
+        user_agent: $("#sc_ua").value,
+        max_concurrency: Number($("#sc_conc").value),
+        start_urls: $("#sc_urls").value.split("\n").map(s=>s.trim()).filter(Boolean),
+        allow_domains: $("#sc_allow").value.split("\n").map(s=>s.trim()).filter(Boolean),
+        block_domains: $("#sc_block").value.split("\n").map(s=>s.trim()).filter(Boolean),
+        render_js: $("#sc_render").checked
+      };
+      await authFetch("/settings/scrape", {method:"POST", body: JSON.stringify(body)});
+      $("#msg").textContent = "Scraper saved";
+    };
+  }
+
+  async function render(view) {
+    try {
+      await authFetch("/users/me"); // verify token
+      nav.hidden = false;
+      if (view === "offers") return viewOffers();
+      if (view === "settings") return viewSettings();
+      return viewDashboard();
+    } catch {
+      showLogin();
+    }
+  }
+
+  nav.addEventListener("click", (e) => {
+    const v = e.target.getAttribute("data-view");
+    if (!v) return;
+    render(v);
+  });
+  $("#logout").onclick = () => { clearToken(); showLogin(); };
+
+  render("dashboard");
+})();

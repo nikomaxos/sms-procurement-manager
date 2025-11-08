@@ -1,0 +1,26 @@
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+app = FastAPI(title="SMS Procurement Manager API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# health
+@app.get("/healthz")
+def healthz():
+    return {"ok": True}
+
+# auto include all routers
+import pkgutil, importlib
+from app import routers as _routers_pkg
+for _, modname, ispkg in pkgutil.iter_modules(_routers_pkg.__path__):
+    m = importlib.import_module(f"app.routers.{modname}")
+    r = getattr(m, "router", None)
+    if r:
+        app.include_router(r)
